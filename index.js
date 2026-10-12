@@ -6,14 +6,34 @@ const {
   PermissionFlagsBits, MessageFlags,
 } = require('discord.js');
 
-/* ───────────── storage (simple JSON file) ───────────── */
+/* ───────────── storage (MongoDB if MONGODB_URI is set, otherwise a JSON file) ───────────── */
 const DATA_DIR = process.env.DATA_DIR || '.';
-fs.mkdirSync(DATA_DIR, { recursive: true });
 const FILE = `${DATA_DIR}/data.json`;
 let db = { giveaways: {}, guilds: {}, stats: {} };
-if (fs.existsSync(FILE)) db = { ...db, ...JSON.parse(fs.readFileSync(FILE, 'utf8')) };
+let mongoColl = null;
+async function initStorage() {
+  if (process.env.MONGODB_URI) {
+    const { MongoClient } = require('mongodb');
+    const mc = new MongoClient(process.env.MONGODB_URI);
+    await mc.connect();
+    mongoColl = mc.db('givevanced').collection('state');
+    const doc = await mongoColl.findOne({ _id: 'main' });
+    if (doc) { delete doc._id; db = { ...db, ...doc }; }
+    console.log('Storage: MongoDB');
+  } else {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    if (fs.existsSync(FILE)) db = { ...db, ...JSON.parse(fs.readFileSync(FILE, 'utf8')) };
+    console.log('Storage: JSON file');
+  }
+}
 let saveTimer;
-const save = () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => fs.writeFileSync(FILE, JSON.stringify(db)), 500); };
+const save = () => {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    if (mongoColl) mongoColl.replaceOne({ _id: 'main' }, { _id: 'main', ...db }, { upsert: true }).catch((e) => console.error('Save failed', e));
+    else fs.writeFileSync(FILE, JSON.stringify(db));
+  }, 1000);
+};
 const guildCfg = (id) => (db.guilds[id] ??= { creatorRoles: [], managerRoles: [] });
 
 /* ───────────── helpers ───────────── */
@@ -41,8 +61,7 @@ function parseExtra(s) {
   }
   return out;
 }
-const levelOf = (xp) => Math.floor(Math.sqrt(xp / 100));
-function statsOf(gid, uid) { return ((db.stats[gid] ??= {})[uid] ??= { total: 0, xp: 0, days: {}, lastXp: 0 }); }
+function statsOf(gid, uid) { return ((db.stats[gid] ??= {})[uid] ??= { total: 0, days: {} }); }
 function countSince(s, daysBack) {
   let n = 0;
   for (let i = 0; i < daysBack; i++) n += s.days[day(new Date(Date.now() - i * 864e5))] || 0;
@@ -72,9 +91,9 @@ function embedFor(g, ended = false) {
       `**Winners:** ${g.winners}`,
       `**Entries:** ${Object.keys(g.entries).length}`,
       reqText(g),
-      ended ? `\n**Winner(s):** ${g.winnerIds.length ? g.winnerIds.map((w) => `<@${w}>`).join(', ') : 'No valid entries'}` : '',
+      ended ? `\n**Winner(s):** ${g.winnerIds.length ? g.winnerIds.map((w) => `<@${w}>${(g.claimed || []).includes(w) ? ' ✅' : ''}`).join(', ') : 'No valid entries'}` : '',
     ].filter(Boolean).join('\n'))
-    .setFooter({ text: ended ? 'Giveaway ended' : 'Givevanced' });
+    .setFooter({ text: ended ? (allClaimed(g) ? 'Giveaway ended • Prize claimed' : 'Giveaway ended') : 'Givevanced' });
   if (g.image) e.setImage(g.image);
   if (g.thumbnail) e.setThumbnail(g.thumbnail);
   return e;
@@ -84,7 +103,6 @@ function reqText(g) {
   if (r.roles.length) l.push(`Roles: ${r.roles.map((x) => `<@&${x}>`).join(', ')}`);
   if (r.boosts) l.push('Must be boosting this server');
   if (r.serverTag) l.push("Must have this server's tag equipped");
-  if (r.level) l.push(`Level ${r.level}+`);
   if (r.daily) l.push(`${r.daily}+ messages today`);
   if (r.weekly) l.push(`${r.weekly}+ messages this week`);
   if (r.monthly) l.push(`${r.monthly}+ messages this month`);
@@ -115,23 +133,44 @@ async function fetchMsg(g) {
   const ch = await client.channels.fetch(g.channelId).catch(() => null);
   return { ch, msg: ch ? await ch.messages.fetch(g.messageId).catch(() => null) : null };
 }
+const allClaimed = (g) => !!g.claimMs && g.winnerIds.length > 0 && g.winnerIds.every((w) => (g.claimed || []).includes(w));
+const claimRow = (g, disabled = false) =>
+  new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`gw_claim:${g.messageId}`).setLabel(disabled ? 'Claimed' : 'Claim').setEmoji('🎁').setStyle(ButtonStyle.Success).setDisabled(disabled));
+
 async function announce(g, ch, winners) {
-  const txt = winners.length
-    ? `🎉 Congratulations ${winners.map((w) => `<@${w}>`).join(', ')}! You won **${g.prize}**!`
-    : `No valid entries for **${g.prize}**, so no winner was chosen.`;
-  const payload = { content: txt, allowedMentions: { users: winners } };
-  if (g.claimMs && winners.length) {
-    payload.components = [new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`gw_claim:${g.messageId}`).setLabel('Claim').setStyle(ButtonStyle.Success))];
-    payload.content += `\nClick **Claim** within <t:${Math.floor(g.claimDeadline / 1000)}:R> or you'll be rerolled.`;
-  }
-  await ch.send(payload).catch(() => {});
   const guild = await client.guilds.fetch(g.guildId).catch(() => null);
+  const fill = (t) => t.replaceAll('{prize}', g.prize).replaceAll('{server}', guild?.name ?? '');
+  const link = `https://discord.com/channels/${g.guildId}/${g.channelId}/${g.messageId}`;
+  const failed = [];
   for (const w of winners) {
     if (g.winnersRole && guild) guild.members.fetch(w).then((m) => m.roles.add(g.winnersRole)).catch(() => {});
-    if (g.dmMessage) client.users.fetch(w).then((u) =>
-      u.send(g.dmMessage.replaceAll('{prize}', g.prize).replaceAll('{server}', guild?.name ?? ''))).catch(() => {});
+    const custom = g.dmMessage ? fill(g.dmMessage) : '';
+    if (g.claimMs) {
+      // Claim button is sent to the winner's DMs
+      const e = new EmbedBuilder().setColor(g.color).setTitle('🎉 You won!')
+        .setDescription(`You won **${g.prize}** in **${guild?.name ?? 'a server'}**!\nClick **Claim** <t:${Math.floor(g.claimDeadline / 1000)}:R> or you'll be rerolled.\n[Jump to giveaway](${link})`);
+      try {
+        const u = await client.users.fetch(w);
+        await u.send({ content: `<@${w}> ${custom}`.trim(), embeds: [e], components: [claimRow(g)] });
+      } catch { failed.push(w); }
+    } else if (custom) {
+      client.users.fetch(w).then((u) => u.send(custom)).catch(() => {});
+    }
   }
+  let content = winners.length
+    ? `🎉 Congratulations ${winners.map((w) => `<@${w}>`).join(', ')}! You won **${g.prize}**!`
+    : `No valid entries for **${g.prize}**, so no winner was chosen.`;
+  const payload = { allowedMentions: { users: winners } };
+  if (g.claimMs && winners.length) {
+    if (failed.length < winners.length) content += `\n📬 Check your DMs to claim within <t:${Math.floor(g.claimDeadline / 1000)}:R>.`;
+    if (failed.length) {
+      content += `\n${failed.map((w) => `<@${w}>`).join(', ')}: your DMs are closed, so claim here within <t:${Math.floor(g.claimDeadline / 1000)}:R>.`;
+      payload.components = [claimRow(g)];
+    }
+  }
+  payload.content = content;
+  await ch.send(payload).catch(() => {});
 }
 async function endGiveaway(g) {
   g.ended = true;
@@ -176,7 +215,6 @@ async function checkEntry(i, g) {
     const pg = u.primaryGuild;
     if (!pg || pg.identityGuildId !== i.guildId || pg.identityEnabled === false) return "You need this server's tag equipped.";
   }
-  if (r.level && levelOf(s.xp) < r.level) return `You need level ${r.level} (you are level ${levelOf(s.xp)}).`;
   if (r.daily && countSince(s, 1) < r.daily) return `You need ${r.daily} messages today (you have ${countSince(s, 1)}).`;
   if (r.weekly && countSince(s, weekDays()) < r.weekly) return `You need ${r.weekly} messages this week (you have ${countSince(s, weekDays())}).`;
   if (r.monthly && countSince(s, monthDays()) < r.monthly) return `You need ${r.monthly} messages this month (you have ${countSince(s, monthDays())}).`;
@@ -207,7 +245,6 @@ gw.addSubcommand((s) => s.setName('create').setDescription('Create a giveaway')
   .addStringOption((o) => o.setName('required-roles').setDescription('Roles required to participate (separate with commas)'))
   .addIntegerOption((o) => o.setName('required-server-boosts').setDescription('Boosts required (the user must be boosting)').setMinValue(1))
   .addBooleanOption((o) => o.setName('require-server-tag').setDescription("Must have this server's tag equipped"))
-  .addIntegerOption((o) => o.setName('required-level').setDescription('The level required to participate').setMinValue(1))
   .addIntegerOption((o) => o.setName('required-daily-messages').setDescription('Messages required today').setMinValue(1))
   .addIntegerOption((o) => o.setName('required-weekly-messages').setDescription('Messages required this week').setMinValue(1))
   .addIntegerOption((o) => o.setName('required-monthly-messages').setDescription('Messages required this month').setMinValue(1))
@@ -230,12 +267,10 @@ gw.addSubcommand((s) => idOpt(s.setName('reroll').setDescription('Reroll the win
 
 const messagesCmd = new SlashCommandBuilder().setName('messages').setDescription('View the number of messages you/other user has sent').setDMPermission(false)
   .addUserOption((o) => o.setName('user').setDescription('User to look up'));
-const leaderboard = new SlashCommandBuilder().setName('leaderboard').setDescription('Leaderboards').setDMPermission(false)
-  .addSubcommand((s) => s.setName('levels').setDescription('View the level leaderboard of this server'));
 
 client.once('ready', async () => {
   const rest = new REST().setToken(process.env.TOKEN);
-  const body = [gw, messagesCmd, leaderboard].map((c) => c.toJSON());
+  const body = [gw, messagesCmd].map((c) => c.toJSON());
   const route = process.env.GUILD_ID
     ? Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID)
     : Routes.applicationCommands(process.env.CLIENT_ID);
@@ -243,12 +278,11 @@ client.once('ready', async () => {
   console.log(`Givevanced online as ${client.user.tag}`);
 });
 
-/* ───────────── message tracking (messages + levels) ───────────── */
+/* ───────────── message tracking ───────────── */
 client.on('messageCreate', (m) => {
   if (!m.guild || m.author.bot) return;
   const s = statsOf(m.guild.id, m.author.id);
   s.total++; s.days[day()] = (s.days[day()] || 0) + 1;
-  if (Date.now() - s.lastXp > 60000) { s.xp += 15 + Math.floor(Math.random() * 11); s.lastXp = Date.now(); }
   save();
 });
 
@@ -266,14 +300,7 @@ client.on('interactionCreate', async (i) => {
         { name: 'Today', value: String(countSince(s, 1)), inline: true },
         { name: 'This week', value: String(countSince(s, weekDays())), inline: true },
         { name: 'This month', value: String(countSince(s, monthDays())), inline: true },
-        { name: 'Total', value: String(s.total), inline: true },
-        { name: 'Level', value: String(levelOf(s.xp)), inline: true })] });
-    }
-    if (i.commandName === 'leaderboard') {
-      const top = Object.entries(db.stats[i.guildId] || {}).sort((a, b) => b[1].xp - a[1].xp).slice(0, 10);
-      return i.reply({ embeds: [new EmbedBuilder().setTitle('Level leaderboard').setColor(0x5865f2)
-        .setDescription(top.map(([id, s], n) => `**${n + 1}.** <@${id}> — Level ${levelOf(s.xp)} (${s.xp} XP)`).join('\n') || 'Nothing yet.')],
-        allowedMentions: { parse: [] } });
+        { name: 'Total', value: String(s.total), inline: true })] });
     }
 
     const sub = i.options.getSubcommand();
@@ -350,7 +377,7 @@ async function createGiveaway(i) {
     bypass: ids(o.getString('requirement-bypass-roles')),
     req: {
       roles: ids(o.getString('required-roles')), boosts: o.getInteger('required-server-boosts') || 0,
-      serverTag: !!o.getBoolean('require-server-tag'), level: o.getInteger('required-level') || 0,
+      serverTag: !!o.getBoolean('require-server-tag'),
       daily: o.getInteger('required-daily-messages') || 0, weekly: o.getInteger('required-weekly-messages') || 0,
       monthly: o.getInteger('required-monthly-messages') || 0, total: o.getInteger('required-total-messages') || 0,
     },
@@ -368,22 +395,43 @@ async function onButton(i) {
     const g = db.giveaways[i.message.id];
     if (!g || g.ended) return i.reply({ content: 'This giveaway has ended.', ...eph });
     if (g.entries[i.user.id]) {
-      delete g.entries[i.user.id]; save();
-      await i.message.edit({ embeds: [embedFor(g)] }).catch(() => {});
-      return i.reply({ content: 'You left the giveaway.', ...eph });
+      const n = g.entries[i.user.id];
+      return i.reply({
+        content: `✅ You've already joined this giveaway (${n} ${n === 1 ? 'entry' : 'entries'}).`,
+        components: [new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`gw_leave:${g.messageId}`).setLabel('Leave giveaway').setStyle(ButtonStyle.Danger))],
+        ...eph,
+      });
     }
     const fail = await checkEntry(i, g);
     if (fail) return i.reply({ content: `❌ ${fail}`, ...eph });
     g.entries[i.user.id] = weightFor(i, g); save();
     await i.message.edit({ embeds: [embedFor(g)] }).catch(() => {});
-    return i.reply({ content: `🎉 You're in! (${g.entries[i.user.id]} ${g.entries[i.user.id] === 1 ? 'entry' : 'entries'}). Click again to leave.`, ...eph });
+    return i.reply({ content: `🎉 You're in! (${g.entries[i.user.id]} ${g.entries[i.user.id] === 1 ? 'entry' : 'entries'}).`, ...eph });
+  }
+  if (i.customId.startsWith('gw_leave:')) {
+    const g = db.giveaways[i.customId.split(':')[1]];
+    if (!g || g.ended) return i.update({ content: 'This giveaway has ended.', components: [] });
+    if (!g.entries[i.user.id]) return i.update({ content: 'You are not in this giveaway.', components: [] });
+    delete g.entries[i.user.id]; save();
+    const { msg } = await fetchMsg(g);
+    if (msg) await msg.edit({ embeds: [embedFor(g)] }).catch(() => {});
+    return i.update({ content: '✅ You left the giveaway.', components: [] });
   }
   if (i.customId.startsWith('gw_claim:')) {
     const g = db.giveaways[i.customId.split(':')[1]];
     if (!g || !g.winnerIds.includes(i.user.id)) return i.reply({ content: 'You are not a winner of this giveaway.', ...eph });
-    if (!g.claimed.includes(i.user.id)) g.claimed.push(i.user.id);
+    if (g.claimed.includes(i.user.id)) return i.reply({ content: 'You already claimed this prize.', ...eph });
+    if (g.claimDeadline && g.claimDeadline < Date.now()) return i.reply({ content: 'The claim time has passed.', ...eph });
+    g.claimed.push(i.user.id);
+    if (allClaimed(g)) g.claimDeadline = null;
     save();
-    return i.reply({ content: '✅ Prize claimed!', ...eph });
+    if (i.inGuild()) await i.reply({ content: '✅ Prize claimed! The host has been notified.', ...eph });
+    else await i.update({ content: '✅ Prize claimed! The host has been notified.', components: [claimRow(g, true)] });
+    const { ch, msg } = await fetchMsg(g);
+    if (msg) await msg.edit({ embeds: [embedFor(g, true)] }).catch(() => {});
+    if (ch) await ch.send({ content: `✅ <@${i.user.id}> claimed **${g.prize}**! <@${g.host}>, they're ready for their prize.`, allowedMentions: { users: [i.user.id, g.host] } }).catch(() => {});
+    return;
   }
 }
 async function onRoleSelect(i) {
@@ -393,7 +441,13 @@ async function onRoleSelect(i) {
   return i.update({ content: `Saved ${key === 'managerRoles' ? 'manager' : 'creator'} roles: ${i.values.map((r) => `<@&${r}>`).join(', ') || 'none'}`, components: [] });
 }
 
-// Tiny HTTP server so Render sees a web service (and so uptime pings have something to hit)
-require('http').createServer((_, res) => res.end('Givevanced is running')).listen(process.env.PORT || 3000);
+// Serves the website (public/index.html) and gives Render + uptime pings something to hit
+require('http').createServer((_, res) => {
+  fs.readFile(`${__dirname}/public/index.html`, 'utf8', (err, html) => {
+    if (err) return res.end('Givevanced is running');
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.end(html.replaceAll('YOUR_CLIENT_ID', process.env.CLIENT_ID || 'YOUR_CLIENT_ID'));
+  });
+}).listen(process.env.PORT || 3000);
 
-client.login(process.env.TOKEN);
+initStorage().then(() => client.login(process.env.TOKEN)).catch((e) => { console.error(e); process.exit(1); });
