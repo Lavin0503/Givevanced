@@ -443,7 +443,9 @@ async function onRoleSelect(i) {
 
 // Serves the website (public/index.html) and gives Render + uptime pings something to hit
 require('http').createServer((_, res) => {
-  fs.readFile(`${__dirname}/public/index.html`, 'utf8', (err, html) => {
+  const page = [`${__dirname}/index.html`, `${__dirname}/public/index.html`].find((p) => fs.existsSync(p));
+  if (!page) return res.end('Givevanced is running');
+  fs.readFile(page, 'utf8', (err, html) => {
     if (err) return res.end('Givevanced is running');
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.end(html.replaceAll('YOUR_CLIENT_ID', process.env.CLIENT_ID || 'YOUR_CLIENT_ID'));
