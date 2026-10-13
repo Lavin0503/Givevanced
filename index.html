@@ -103,6 +103,10 @@ footer .wrap{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .final{background:linear-gradient(160deg,var(--surface),color-mix(in srgb,var(--accent2) 8%,var(--surface)))}
 .tg{width:42px;padding:9px 0;justify-content:center}.nr{display:flex;gap:10px;align-items:center}
 @media(prefers-reduced-motion:reduce){.embed,.mt{animation:none}.reveal{opacity:1;transform:none}}
+.by{position:relative;color:var(--text);font-weight:700;border-bottom:1px dashed var(--accent);cursor:help;outline:0}
+.by::after{content:attr(data-tip);position:absolute;left:50%;bottom:calc(100% + 10px);transform:translate(-50%,6px);background:var(--text);color:var(--bg);padding:6px 12px;border-radius:8px;font-size:13px;font-weight:600;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s}
+.by:hover::after,.by:focus::after{opacity:1;transform:translate(-50%,0)}
+footer .wrap{align-items:center}.legal{flex-basis:100%;font-size:12px;opacity:.8}
 @media(max-width:860px){.grid2{grid-template-columns:1fr;gap:40px}.embed{margin:0 auto}.feat,.steps{grid-template-columns:1fr}.cmds{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,1fr)}.links{display:none}.sec{padding:60px 0}.hero{padding-top:48px}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
 </style>
@@ -190,7 +194,7 @@ footer .wrap{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
   <a class="btn main invite" href="#">Add to Discord</a>
 </div></section>
 
-<footer><div class="wrap"><span style="display:flex;align-items:center;gap:10px"><img src="https://lavin0503.github.io/Givevanced/Givevanced%20Logo.jpg" alt="" width="24" height="24" style="border-radius:7px" onerror="this.remove()">© <span id="yr"></span> Givevanced</span><span>Not affiliated with Discord Inc.</span></div></footer>
+<footer><div class="wrap"><span style="display:flex;align-items:center;gap:10px"><img src="https://lavin0503.github.io/Givevanced/Givevanced%20Logo.jpg" alt="" width="24" height="24" style="border-radius:7px" onerror="this.remove()">© <span id="yr"></span> Givevanced</span><span>Made by <span class="by" tabindex="0" data-tip="Lavin Sai Palappa">Vanced Bots</span></span><a class="btn sm" href="https://lavin0503.github.io/" target="_blank" rel="noopener noreferrer">Explore more projects ↗</a><span class="legal">Not affiliated with Discord Inc.</span></div></footer>
 <div id="toast" role="status"></div>
 
 <script>
