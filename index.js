@@ -2,8 +2,8 @@ require('dotenv').config();
 const fs = require('fs');
 const {
   Client, GatewayIntentBits, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder,
-  ButtonBuilder, ButtonStyle, RoleSelectMenuBuilder, REST, Routes,
-  PermissionFlagsBits, MessageFlags,
+  ButtonBuilder, ButtonStyle, RoleSelectMenuBuilder, StringSelectMenuBuilder, ModalBuilder, TextInputBuilder,
+  TextInputStyle, REST, Routes, PermissionFlagsBits, MessageFlags,
 } = require('discord.js');
 
 /* ───────────── storage (MongoDB if MONGODB_URI is set, otherwise a JSON file) ───────────── */
@@ -111,9 +111,10 @@ function reqText(g) {
     l.push('Extra entries: ' + Object.entries(g.extra).map(([id, n]) => `<@&${id}> ×${n}`).join(', '));
   return l.length ? `\n**Requirements**\n${l.map((x) => `• ${x}`).join('\n')}` : '';
 }
-const enterRow = (disabled = false) =>
+const enterRow = (g, disabled = false) =>
   new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('gw_enter').setLabel('Enter').setEmoji('🎉').setStyle(ButtonStyle.Primary).setDisabled(disabled));
+    new ButtonBuilder().setCustomId('gw_enter').setLabel(String(Object.keys(g.entries).length)).setEmoji('🎉').setStyle(ButtonStyle.Primary).setDisabled(disabled),
+    new ButtonBuilder().setCustomId(`gw_parts:${g.messageId}`).setLabel('Participants').setEmoji('👥').setStyle(ButtonStyle.Secondary));
 
 /* ───────────── core giveaway logic ───────────── */
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages] });
@@ -179,7 +180,7 @@ async function endGiveaway(g) {
   if (g.claimMs) g.claimDeadline = Date.now() + g.claimMs;
   save();
   const { ch, msg } = await fetchMsg(g);
-  if (msg) await msg.edit({ embeds: [embedFor(g, true)], components: [enterRow(true)] }).catch(() => {});
+  if (msg) await msg.edit({ embeds: [embedFor(g, true)], components: [enterRow(g, true)] }).catch(() => {});
   if (ch) await announce(g, ch, g.winnerIds);
 }
 async function rerollUnclaimed(g) {
@@ -292,6 +293,8 @@ client.on('interactionCreate', async (i) => {
   try {
     if (i.isButton()) return await onButton(i);
     if (i.isRoleSelectMenu()) return await onRoleSelect(i);
+    if (i.isStringSelectMenu()) return await onStringSelect(i);
+    if (i.isModalSubmit()) return await onModal(i);
     if (!i.isChatInputCommand()) return;
 
     if (i.commandName === 'messages') {
@@ -324,7 +327,7 @@ client.on('interactionCreate', async (i) => {
     }
     if (sub === 'fix') {
       if (!g.ended && g.endsAt <= Date.now()) await endGiveaway(g);
-      else { const { msg } = await fetchMsg(g); if (msg) await msg.edit({ embeds: [embedFor(g, g.ended)], components: [enterRow(g.ended)] }); }
+      else { const { msg } = await fetchMsg(g); if (msg) await msg.edit({ embeds: [embedFor(g, g.ended)], components: [enterRow(g, g.ended)] }); }
       return i.reply({ content: 'Giveaway fixed.', ...eph });
     }
     if (sub === 'delete') {
@@ -351,7 +354,7 @@ client.on('interactionCreate', async (i) => {
       if (winners) g.winners = winners;
       if (dur && !g.ended) { const t = parseDuration(dur); if (!t) return i.reply({ content: 'Invalid duration.', ...eph }); g.endsAt = t; }
       save();
-      const { msg } = await fetchMsg(g); if (msg) await msg.edit({ embeds: [embedFor(g, g.ended)] });
+      const { msg } = await fetchMsg(g); if (msg) await msg.edit({ embeds: [embedFor(g, g.ended)], components: [enterRow(g, g.ended)] });
       return i.reply({ content: 'Giveaway updated.', ...eph });
     }
   } catch (e) {
@@ -383,7 +386,7 @@ async function createGiveaway(i) {
     },
     entries: {}, winnerIds: [], claimed: [],
   };
-  const msg = await ch.send({ embeds: [embedFor(g)], components: [enterRow()] });
+  const msg = await ch.send({ embeds: [embedFor(g)], components: [enterRow(g)] });
   g.messageId = msg.id; db.giveaways[msg.id] = g; save();
   const extraMsg = o.getString('giveaway-create-message');
   if (extraMsg) await ch.send(extraMsg).catch(() => {});
@@ -403,11 +406,43 @@ async function onButton(i) {
         ...eph,
       });
     }
+    if ((g.removed || []).includes(i.user.id)) return i.reply({ content: '❌ You were removed from this giveaway by a moderator.', ...eph });
     const fail = await checkEntry(i, g);
     if (fail) return i.reply({ content: `❌ ${fail}`, ...eph });
     g.entries[i.user.id] = weightFor(i, g); save();
-    await i.message.edit({ embeds: [embedFor(g)] }).catch(() => {});
-    return i.reply({ content: `🎉 You're in! (${g.entries[i.user.id]} ${g.entries[i.user.id] === 1 ? 'entry' : 'entries'}).`, ...eph });
+    await i.message.edit({ embeds: [embedFor(g)], components: [enterRow(g)] }).catch(() => {});
+    const w = g.entries[i.user.id];
+    return i.reply({ embeds: [new EmbedBuilder().setColor(0x57f287).setTitle('Entry Confirmed!')
+      .setDescription(`Your entry for the giveaway of **${g.prize}** is confirmed!${w > 1 ? `\nYou have **${w}** entries.` : ''}`)], ...eph });
+  }
+  if (i.customId.startsWith('gw_parts:')) {
+    const g = db.giveaways[i.message.id];
+    if (!g) return i.reply({ content: 'Giveaway not found.', ...eph });
+    return i.reply({ ...(await partsView(i, g, 1)), ...eph });
+  }
+  if (i.customId.startsWith('gw_pg:')) {
+    const [, id, page] = i.customId.split(':');
+    const g = db.giveaways[id];
+    if (!g) return i.reply({ content: 'Giveaway not found.', ...eph });
+    return i.update(await partsView(i, g, Number(page)));
+  }
+  if (i.customId.startsWith('gw_goto:')) {
+    return i.showModal(new ModalBuilder().setCustomId(`gw_gotom:${i.customId.split(':')[1]}`).setTitle('Go To Page').addComponents(
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('page').setLabel('Page number').setStyle(TextInputStyle.Short).setRequired(true))));
+  }
+  if (i.customId.startsWith('gw_rm:')) {
+    const [, id, page] = i.customId.split(':');
+    const g = db.giveaways[id];
+    if (!g || !isManager(i)) return i.reply({ content: 'Only managers can remove participants.', ...eph });
+    const all = Object.keys(g.entries), p = Math.min(Math.max(Number(page) || 1, 1), Math.max(1, Math.ceil(all.length / PAGE)));
+    const slice = all.slice((p - 1) * PAGE, p * PAGE);
+    if (!slice.length) return i.update(await partsView(i, g, p, 'There is nobody to remove.'));
+    const users = await Promise.all(slice.map((u) => client.users.fetch(u).catch(() => null)));
+    const select = new StringSelectMenuBuilder().setCustomId(`gw_rmsel:${g.messageId}:${p}`).setPlaceholder('Select a participant to remove')
+      .addOptions(slice.map((u, n) => ({ label: (users[n]?.username || u).slice(0, 100), description: `ID: ${u}`, value: u })));
+    return i.update({ content: 'Select the participant to remove:', embeds: [], components: [
+      new ActionRowBuilder().addComponents(select),
+      new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`gw_pg:${g.messageId}:${p}`).setLabel('Back').setStyle(ButtonStyle.Secondary))] });
   }
   if (i.customId.startsWith('gw_leave:')) {
     const g = db.giveaways[i.customId.split(':')[1]];
@@ -415,7 +450,7 @@ async function onButton(i) {
     if (!g.entries[i.user.id]) return i.update({ content: 'You are not in this giveaway.', components: [] });
     delete g.entries[i.user.id]; save();
     const { msg } = await fetchMsg(g);
-    if (msg) await msg.edit({ embeds: [embedFor(g)] }).catch(() => {});
+    if (msg) await msg.edit({ embeds: [embedFor(g)], components: [enterRow(g)] }).catch(() => {});
     return i.update({ content: '✅ You left the giveaway.', components: [] });
   }
   if (i.customId.startsWith('gw_claim:')) {
@@ -433,6 +468,49 @@ async function onButton(i) {
     if (ch) await ch.send({ content: `✅ <@${i.user.id}> claimed **${g.prize}**! <@${g.host}>, they're ready for their prize.`, allowedMentions: { users: [i.user.id, g.host] } }).catch(() => {});
     return;
   }
+}
+const PAGE = 10;
+async function partsView(i, g, page, notice = '') {
+  const ids = Object.keys(g.entries);
+  const pages = Math.max(1, Math.ceil(ids.length / PAGE));
+  page = Math.min(Math.max(page || 1, 1), pages);
+  const slice = ids.slice((page - 1) * PAGE, page * PAGE);
+  const totalEntries = Object.values(g.entries).reduce((a, b) => a + b, 0);
+  const mine = g.entries[i.user.id] || 0;
+  const chance = (totalEntries ? (mine / totalEntries) * 100 : 0).toFixed(1).replace(/\.0$/, '');
+  const lines = slice.map((id, n) => `${(page - 1) * PAGE + n + 1}. <@${id}> (**${g.entries[id]}** ${g.entries[id] === 1 ? 'entry' : 'entries'})`);
+  const e = new EmbedBuilder().setColor(0xe67e22).setTitle(`👥 Giveaway Participants (Page ${page}/${pages})`)
+    .setDescription(`These are the members that have participated in the giveaway of **${g.prize}**:\n\n${lines.join('\n') || '*Nobody has joined yet.*'}\n\nTotal Participants: **${ids.length}**\nTotal Entries: **${totalEntries}**\n\nYour Entries: **${mine}**\nYour Chance of Winning: **${chance}%**`);
+  const nav = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`gw_pg:${g.messageId}:${page - 1}`).setEmoji('◀️').setStyle(ButtonStyle.Secondary).setDisabled(page <= 1),
+    new ButtonBuilder().setCustomId(`gw_goto:${g.messageId}`).setLabel('Go To Page').setStyle(ButtonStyle.Secondary).setDisabled(pages <= 1),
+    new ButtonBuilder().setCustomId(`gw_pg:${g.messageId}:${page + 1}`).setEmoji('▶️').setStyle(ButtonStyle.Secondary).setDisabled(page >= pages));
+  const rows = [nav];
+  if (isManager(i) && !g.ended && slice.length)
+    rows.push(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`gw_rm:${g.messageId}:${page}`).setLabel('Remove A Participant').setStyle(ButtonStyle.Danger)));
+  return { content: notice, embeds: [e], components: rows, allowedMentions: { parse: [] } };
+}
+async function onStringSelect(i) {
+  if (!i.customId.startsWith('gw_rmsel:')) return;
+  const [, id, page] = i.customId.split(':');
+  const g = db.giveaways[id];
+  if (!g || !isManager(i)) return i.reply({ content: 'Not allowed.', ...eph });
+  const uid = i.values[0];
+  delete g.entries[uid];
+  g.removed ??= [];
+  if (!g.removed.includes(uid)) g.removed.push(uid);
+  save();
+  const { msg } = await fetchMsg(g);
+  if (msg) await msg.edit({ embeds: [embedFor(g)], components: [enterRow(g)] }).catch(() => {});
+  return i.update(await partsView(i, g, Number(page), `✅ Removed <@${uid}> from the giveaway.`));
+}
+async function onModal(i) {
+  if (!i.customId.startsWith('gw_gotom:')) return;
+  const g = db.giveaways[i.customId.split(':')[1]];
+  if (!g) return i.reply({ content: 'Giveaway not found.', ...eph });
+  const p = parseInt(i.fields.getTextInputValue('page'), 10);
+  if (Number.isNaN(p)) return i.reply({ content: 'Please enter a valid page number.', ...eph });
+  return i.update(await partsView(i, g, p));
 }
 async function onRoleSelect(i) {
   if (!i.customId.startsWith('cfg:') || !isManager(i)) return i.reply({ content: 'Not allowed.', ...eph });
