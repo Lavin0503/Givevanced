@@ -107,6 +107,7 @@ footer .wrap{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .by::after{content:attr(data-tip);position:absolute;left:50%;bottom:calc(100% + 10px);transform:translate(-50%,6px);background:var(--text);color:var(--bg);padding:6px 12px;border-radius:8px;font-size:13px;font-weight:600;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s}
 .by:hover::after,.by:focus::after{opacity:1;transform:translate(-50%,0)}
 footer .wrap{align-items:center}.legal{flex-basis:100%;font-size:12px;opacity:.8}
+@media(max-width:560px){.nr .invite{display:none}}
 @media(max-width:860px){.grid2{grid-template-columns:1fr;gap:40px}.embed{margin:0 auto}.feat,.steps{grid-template-columns:1fr}.cmds{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,1fr)}.links{display:none}.sec{padding:60px 0}.hero{padding-top:48px}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
 </style>
@@ -114,8 +115,8 @@ footer .wrap{align-items:center}.legal{flex-basis:100%;font-size:12px;opacity:.8
 <body>
 <nav><div class="wrap">
   <a class="logo" href="#"><img src="https://lavin0503.github.io/Givevanced/Givevanced%20Logo.jpg" alt="Givevanced logo" width="34" height="34" onerror="this.replaceWith(Object.assign(document.createElement('i'),{textContent:'🎉'}))">Givevanced</a>
-  <div class="links"><a href="#features">Features</a><a href="#commands">Commands</a><a href="#how">How it works</a><a href="#faq">FAQ</a></div>
-  <div class="nr"><button class="btn sm tg" id="th" aria-label="Toggle theme">🌓</button><a class="btn main sm invite" href="#">Add to Discord</a></div>
+  <div class="links"><a href="#features">Features</a><a href="#commands">Commands</a><a href="#how">How it works</a><a href="#faq">FAQ</a><a href="/dashboard">Dashboard</a></div>
+  <div class="nr"><a class="btn sm" href="/dashboard">Dashboard</a><button class="btn sm tg" id="th" aria-label="Toggle theme">🌓</button><a class="btn main sm invite" href="#">Add to Discord</a></div>
 </div></nav>
 
 <header class="hero"><canvas id="confetti"></canvas><div class="wrap grid2">
@@ -182,6 +183,7 @@ footer .wrap{align-items:center}.legal{flex-basis:100%;font-size:12px;opacity:.8
 <section class="sec" id="faq"><div class="wrap" style="max-width:760px">
   <span class="eyebrow">FAQ</span><h2>Questions, <span>answered.</span></h2><br>
   <details><summary>Who can create giveaways?</summary><p>Anyone with Manage Server, a manager role, or a creator role. Set the roles with /giveaway manager-roles and /giveaway creator-roles.</p></details>
+  <details><summary>Is there a website dashboard?</summary><p>Yes. Log in with Discord on the Dashboard to see live giveaways in your servers. Every giveaway embed also has a Website button, where you can view the details and join if you meet the requirements.</p></details>
   <details><summary>Can I leave a giveaway after joining?</summary><p>Yes. Click Enter again and the bot privately tells you that you already joined, with a button to leave.</p></details>
   <details><summary>What if a winner has DMs closed?</summary><p>Givevanced posts the Claim button in the giveaway channel instead, and pings the winner there.</p></details>
   <details><summary>How do message requirements work?</summary><p>The bot counts messages sent after it joins. Requirements can be daily, weekly, monthly or total.</p></details>
