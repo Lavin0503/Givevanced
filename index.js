@@ -349,7 +349,18 @@ client.once('ready', async () => {
     ? Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID)
     : Routes.applicationCommands(process.env.CLIENT_ID);
   await rest.put(route, { body });
-  client.user.setPresence({ activities: [{ name: 'givevanced.onrender.com | Made by @lav1nrules', type: ActivityType.Playing }], status: 'online' });
+  // Scrolling status: the text slides one character every STATUS_SPEED ms and loops
+  const MARQUEE = 'givevanced.onrender.com | Made by @lav1nrules ✦ ';
+  const WINDOW = 24;          // characters shown at once
+  const STATUS_SPEED = 2000;  // ms between updates (Discord may drop updates if this is too fast)
+  let pos = 0;
+  const rotate = () => {
+    const text = (MARQUEE + MARQUEE).slice(pos, pos + WINDOW).trim();
+    pos = (pos + 1) % MARQUEE.length;
+    client.user.setPresence({ activities: [{ name: text, type: ActivityType.Playing }], status: 'online' });
+  };
+  rotate();
+  setInterval(rotate, STATUS_SPEED);
   console.log(`Givevanced online as ${client.user.tag}`);
 });
 
