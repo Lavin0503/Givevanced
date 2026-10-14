@@ -3,7 +3,7 @@ const fs = require('fs');
 const {
   Client, GatewayIntentBits, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder,
   ButtonBuilder, ButtonStyle, RoleSelectMenuBuilder, StringSelectMenuBuilder, ModalBuilder, TextInputBuilder,
-  TextInputStyle, REST, Routes, PermissionFlagsBits, MessageFlags,
+  TextInputStyle, REST, Routes, PermissionFlagsBits, MessageFlags, ChannelType,
 } = require('discord.js');
 
 const BASE = (process.env.BASE_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/$/, '');
@@ -391,34 +391,41 @@ client.on('interactionCreate', async (i) => {
   }
 });
 
+async function launchGiveaway(o) {
+  const g = {
+    guildId: o.guildId, channelId: o.ch.id, messageId: null, endsAt: o.endsAt, ended: false,
+    prize: o.prize, winners: o.winners, host: o.host, extra: o.extra || {}, winnersRole: o.winnersRole || null,
+    claimMs: o.claimMs || null, dmMessage: o.dmMessage || null, image: o.image || null, thumbnail: o.thumbnail || null,
+    color: o.color, endColor: o.endColor, bypass: o.bypass || [], req: o.req, entries: {}, winnerIds: [], claimed: [],
+  };
+  const msg = await o.ch.send({ embeds: [embedFor(g)], components: [enterRow(g)] });
+  g.messageId = msg.id; db.giveaways[msg.id] = g; save();
+  await msg.edit({ embeds: [embedFor(g)], components: [enterRow(g)] }).catch(() => {});
+  const extraMsg = o.createMessage;
+  if (extraMsg) await o.ch.send({ content: (extraMsg.match(/<@[&!]?\d+>|@everyone|@here/g) || []).join(' ') || undefined,
+    embeds: [new EmbedBuilder().setColor(g.color).setDescription(extraMsg.slice(0, 4000))], allowedMentions: { parse: ['roles', 'users'] } }).catch(() => {});
+  return g;
+}
 async function createGiveaway(i) {
   const o = i.options, endsAt = parseDuration(o.getString('duration'));
   if (!endsAt || endsAt <= Date.now()) return i.reply({ content: 'Invalid duration. Try `1 hour`, `2 days` or a Discord timestamp.', ...eph });
   const ch = o.getChannel('channel') || i.channel;
   if (!ch?.isTextBased()) return i.reply({ content: 'Pick a text channel.', ...eph });
   const claimStr = o.getString('claim-time');
-  const g = {
-    guildId: i.guildId, channelId: ch.id, messageId: null, endsAt, ended: false,
-    prize: o.getString('prize'), winners: o.getInteger('winners'), host: (o.getUser('host') || i.user).id,
+  await launchGiveaway({
+    guildId: i.guildId, ch, endsAt, prize: o.getString('prize'), winners: o.getInteger('winners'), host: (o.getUser('host') || i.user).id,
     extra: parseExtra(o.getString('extra-entries')), winnersRole: o.getRole('giveaway-winners-role')?.id || null,
     claimMs: claimStr ? parseMs(claimStr) : null, dmMessage: o.getString('giveaway-winners-dm-message'),
     image: o.getAttachment('image')?.url || null, thumbnail: o.getAttachment('thumbnail')?.url || null,
     color: parseColor(o.getString('color'), 0x5865f2), endColor: parseColor(o.getString('end-color'), 0x2b2d31),
-    bypass: ids(o.getString('requirement-bypass-roles')),
+    bypass: ids(o.getString('requirement-bypass-roles')), createMessage: o.getString('giveaway-create-message'),
     req: {
       roles: ids(o.getString('required-roles')), boosts: o.getInteger('required-server-boosts') || 0,
       serverTag: !!o.getBoolean('require-server-tag'),
       daily: o.getInteger('required-daily-messages') || 0, weekly: o.getInteger('required-weekly-messages') || 0,
       monthly: o.getInteger('required-monthly-messages') || 0, total: o.getInteger('required-total-messages') || 0,
     },
-    entries: {}, winnerIds: [], claimed: [],
-  };
-  const msg = await ch.send({ embeds: [embedFor(g)], components: [enterRow(g)] });
-  g.messageId = msg.id; db.giveaways[msg.id] = g; save();
-  await msg.edit({ embeds: [embedFor(g)], components: [enterRow(g)] }).catch(() => {});
-  const extraMsg = o.getString('giveaway-create-message');
-  if (extraMsg) await ch.send({ content: (extraMsg.match(/<@[&!]?\d+>|@everyone|@here/g) || []).join(' ') || undefined,
-    embeds: [new EmbedBuilder().setColor(g.color).setDescription(extraMsg.slice(0, 4000))], allowedMentions: { parse: ['roles', 'users'] } }).catch(() => {});
+  });
   return i.reply({ content: `✅ Giveaway created in ${ch}.`, ...eph });
 }
 
@@ -549,6 +556,95 @@ async function onRoleSelect(i) {
   return i.update({ content: `Saved ${key === 'managerRoles' ? 'manager' : 'creator'} roles: ${i.values.map((r) => `<@&${r}>`).join(', ') || 'none'}`, components: [] });
 }
 
+/* ───────────── dashboard management helpers ───────────── */
+function flagsOf(guild, m) {
+  const c = guildCfg(guild.id);
+  const manage = m.permissions.has(PermissionFlagsBits.ManageGuild) || c.managerRoles.some((r) => m.roles.cache.has(r));
+  return { manage, create: manage || c.creatorRoles.some((r) => m.roles.cache.has(r)) };
+}
+async function rerollGiveaway(g) {
+  if (!g.ended) return [400, 'That giveaway has not ended.'];
+  const w = pickWinners(g, g.winners);
+  g.winnerIds = w; g.claimed = []; if (g.claimMs) g.claimDeadline = Date.now() + g.claimMs; save();
+  const { ch, msg } = await fetchMsg(g);
+  if (msg) await msg.edit({ embeds: [embedFor(g, true)] }).catch(() => {});
+  if (ch) await announce(g, ch, w);
+  return [200, null];
+}
+async function deleteGiveaway(g) {
+  const { msg } = await fetchMsg(g);
+  if (msg) await msg.delete().catch(() => {});
+  delete db.giveaways[g.messageId]; save();
+  return [200, null];
+}
+async function editGiveaway(g, b) {
+  if (typeof b.prize === 'string' && b.prize.trim()) g.prize = b.prize.trim().slice(0, 256);
+  const w = parseInt(b.winners, 10);
+  if (w >= 1 && w <= 50) g.winners = w;
+  if (!g.ended && typeof b.duration === 'string' && b.duration.trim()) {
+    const t = parseDuration(b.duration.trim());
+    if (!t || t <= Date.now()) return [400, 'Invalid duration. Try "1 hour", "2 days" or a Discord timestamp.'];
+    g.endsAt = t;
+  }
+  save(); await refreshMessage(g);
+  return [200, null];
+}
+async function removeParticipant(g, uid) {
+  if (!g.entries[uid]) return [400, 'That user is not in this giveaway.'];
+  delete g.entries[uid];
+  g.removed ??= [];
+  if (!g.removed.includes(uid)) g.removed.push(uid);
+  save(); await refreshMessage(g);
+  return [200, null];
+}
+async function createFromWeb(guild, s, b) {
+  const str = (v, n) => (typeof v === 'string' ? v.trim().slice(0, n) : '');
+  const int = (v, lo, hi) => { const x = parseInt(v, 10); return Number.isFinite(x) ? Math.min(Math.max(x, lo), hi) : lo; };
+  const hasRole = (r) => typeof r === 'string' && guild.roles.cache.has(r);
+  const roleList = (arr) => (Array.isArray(arr) ? arr : []).filter(hasRole).slice(0, 25);
+  const link = (v) => { v = str(v, 500); return /^https:\/\/\S+$/.test(v) ? v : null; };
+  const prize = str(b.prize, 256);
+  if (!prize) return [400, 'Prize is required.'];
+  const endsAt = parseDuration(str(b.duration, 60));
+  if (!endsAt || endsAt <= Date.now()) return [400, 'Invalid duration. Try "1 hour", "2 days" or a Discord timestamp.'];
+  const ch = guild.channels.cache.get(str(b.channelId, 25));
+  const okType = ch && (ch.type === ChannelType.GuildText || ch.type === ChannelType.GuildAnnouncement);
+  if (!okType || !ch.permissionsFor(guild.members.me)?.has(['ViewChannel', 'SendMessages', 'EmbedLinks'])) return [400, 'Pick a channel the bot can post in.'];
+  const claimStr = str(b.claimTime, 40), claimMs = claimStr ? parseMs(claimStr) : null;
+  if (claimStr && !claimMs) return [400, 'Invalid claim time. Try "24 hours".'];
+  const extra = {};
+  for (const e of (Array.isArray(b.extra) ? b.extra : []).slice(0, 25)) if (hasRole(e?.role)) extra[e.role] = int(e.entries, 1, 100);
+  const g = await launchGiveaway({
+    guildId: guild.id, ch, endsAt, prize, winners: int(b.winners, 1, 50), host: s.uid, extra,
+    winnersRole: hasRole(b.winnersRole) ? b.winnersRole : null, claimMs, dmMessage: str(b.dmMessage, 1500) || null,
+    image: link(b.image), thumbnail: link(b.thumbnail), color: parseColor(str(b.color, 7), 0x5865f2), endColor: parseColor(str(b.endColor, 7), 0x2b2d31),
+    bypass: roleList(b.bypass), createMessage: str(b.createMessage, 1500) || null,
+    req: { roles: roleList(b.requiredRoles), boosts: b.boosts ? 1 : 0, serverTag: !!b.serverTag,
+      daily: int(b.daily, 0, 100000), weekly: int(b.weekly, 0, 100000), monthly: int(b.monthly, 0, 100000), total: int(b.total, 0, 1000000) },
+  });
+  return [200, null, { id: g.messageId }];
+}
+const hex = (n) => '#' + Number(n).toString(16).padStart(6, '0');
+function readBody(req, max = 65536) {
+  return new Promise((resolve, reject) => {
+    let d = '', size = 0;
+    req.on('data', (c) => { size += c.length; if (size > max) { reject(new Error('Body too large')); req.destroy(); } else d += c; });
+    req.on('end', () => { try { resolve(d ? JSON.parse(d) : {}); } catch (e) { reject(e); } });
+    req.on('error', reject);
+  });
+}
+async function authGuild(req, res, gid) {
+  const s = getSession(req);
+  if (!s) { sendJson(res, 401, { error: 'Log in with Discord first.' }); return null; }
+  const guild = client.guilds.cache.get(gid);
+  if (!guild) { sendJson(res, 404, { error: 'Givevanced is not in that server.' }); return null; }
+  const m = await guild.members.fetch(s.uid).catch(() => null);
+  if (!m) { sendJson(res, 403, { error: "You're not a member of that server." }); return null; }
+  return { s, guild, m, ...flagsOf(guild, m) };
+}
+const gSummary = (g, guild) => ({ id: g.messageId, prize: g.prize, ended: g.ended, endsAt: g.endsAt, winners: g.winners, entries: Object.keys(g.entries).length,
+  channel: guild.channels.cache.get(g.channelId)?.name || 'deleted-channel' });
+
 /* ───────────── website: pages, Discord login and giveaway API ───────────── */
 const crypto = require('crypto');
 const sessions = () => (db.sessions ??= {});
@@ -629,6 +725,7 @@ function servePage(res, name) {
 async function handle(req, res) {
   const url = new URL(req.url, 'http://x'), p = url.pathname;
   res.setHeader('X-Content-Type-Options', 'nosniff');
+  if (req.method !== 'GET' && req.method !== 'HEAD' && req.headers.origin && BASE && req.headers.origin !== BASE) return sendJson(res, 403, { error: 'Bad origin.' });
 
   if (p === '/login') {
     if (!loginReady()) return res.end('Login is not configured yet. Set CLIENT_SECRET and BASE_URL on the server.');
@@ -680,23 +777,95 @@ async function handle(req, res) {
       entered: !!g.entries[s.uid], guild: client.guilds.cache.get(g.guildId)?.name || 'Server', icon: client.guilds.cache.get(g.guildId)?.iconURL({ size: 64 }) || null });
     return sendJson(res, 200, { live: live.map(sum), ended: ended.map(sum) });
   }
-  const m = p.match(/^\/api\/giveaway\/(\d+)(?:\/(join|leave))?$/);
-  if (m) {
-    const g = db.giveaways[m[1]], s = getSession(req);
-    if (!g) return sendJson(res, 404, { error: 'Giveaway not found.' });
-    if (!m[2]) return sendJson(res, 200, await giveawayInfo(g, s));
+  if (p === '/api/servers') {
+    const s = getSession(req);
+    if (!s) return sendJson(res, 401, { error: 'Not logged in' });
+    const out = await Promise.all(s.guilds.filter((id) => client.guilds.cache.has(id)).slice(0, 40).map(async (id) => {
+      const guild = client.guilds.cache.get(id), m = await guild.members.fetch(s.uid).catch(() => null);
+      if (!m) return null;
+      return { id, name: guild.name, icon: guild.iconURL({ size: 64 }), ...flagsOf(guild, m), live: Object.values(db.giveaways).filter((g) => g.guildId === id && !g.ended).length };
+    }));
+    return sendJson(res, 200, { servers: out.filter(Boolean) });
+  }
+  const sm = p.match(/^\/api\/server\/(\d+)(?:\/(giveaway|roles))?$/);
+  if (sm) {
+    const a = await authGuild(req, res, sm[1]);
+    if (!a) return;
+    const { guild } = a;
+    if (!sm[2]) {
+      const all = Object.values(db.giveaways).filter((g) => g.guildId === guild.id);
+      const live = all.filter((g) => !g.ended).sort((x, y) => x.endsAt - y.endsAt), ended = all.filter((g) => g.ended).sort((x, y) => y.endsAt - x.endsAt).slice(0, 25);
+      const top = Object.entries(db.stats[guild.id] || {}).sort((x, y) => y[1].total - x[1].total).slice(0, 10);
+      const me = guild.members.me;
+      return sendJson(res, 200, {
+        id: guild.id, name: guild.name, icon: guild.iconURL({ size: 128 }), flags: { manage: a.manage, create: a.create },
+        channels: [...guild.channels.cache.values()].filter((c) => (c.type === ChannelType.GuildText || c.type === ChannelType.GuildAnnouncement) && c.permissionsFor(me)?.has(['ViewChannel', 'SendMessages', 'EmbedLinks']))
+          .sort((x, y) => x.rawPosition - y.rawPosition).map((c) => ({ id: c.id, name: c.name })),
+        roles: [...guild.roles.cache.values()].filter((r) => r.id !== guild.id && !r.managed).sort((x, y) => y.position - x.position).map((r) => ({ id: r.id, name: r.name })),
+        settings: a.manage ? { creatorRoles: guildCfg(guild.id).creatorRoles, managerRoles: guildCfg(guild.id).managerRoles } : null,
+        live: live.map((g) => gSummary(g, guild)), ended: ended.map((g) => gSummary(g, guild)),
+        stats: { live: live.length, hosted: all.length, entries: live.reduce((n, g) => n + Object.keys(g.entries).length, 0), members: guild.memberCount },
+        top: await Promise.all(top.map(async ([id, st]) => ({ id, username: await nameOf(id), total: st.total }))),
+      });
+    }
     if (req.method !== 'POST') return sendJson(res, 405, { error: 'Use POST.' });
-    if (!s) return sendJson(res, 401, { error: 'Log in with Discord first.' });
-    const [code, error] = await (m[2] === 'join' ? webJoin(g, s) : webLeave(g, s));
-    return sendJson(res, code, error ? { error } : { ok: true });
+    const body = await readBody(req);
+    if (sm[2] === 'giveaway') {
+      if (!a.create) return sendJson(res, 403, { error: 'You need Manage Server or a creator role to create giveaways.' });
+      const [code, error, extra] = await createFromWeb(guild, a.s, body);
+      return sendJson(res, code, error ? { error } : { ok: true, ...extra });
+    }
+    if (!a.manage) return sendJson(res, 403, { error: 'You need Manage Server or a manager role.' });
+    const pick = (arr) => (Array.isArray(arr) ? arr : []).filter((r) => typeof r === 'string' && guild.roles.cache.has(r)).slice(0, 25);
+    const cfg = guildCfg(guild.id);
+    cfg.creatorRoles = pick(body.creatorRoles); cfg.managerRoles = pick(body.managerRoles); save();
+    return sendJson(res, 200, { ok: true });
   }
 
-  if (p === '/dashboard' || /^\/giveaway\/\d+\/?$/.test(p)) return servePage(res, 'dashboard.html');
+  const m = p.match(/^\/api\/giveaway\/(\d+)(?:\/([a-z]+))?$/);
+  if (m) {
+    const g = db.giveaways[m[1]], s = getSession(req), act = m[2];
+    if (!g) return sendJson(res, 404, { error: 'Giveaway not found.' });
+    if (!act) return sendJson(res, 200, await giveawayInfo(g, s));
+    if (act === 'join' || act === 'leave') {
+      if (req.method !== 'POST') return sendJson(res, 405, { error: 'Use POST.' });
+      if (!s) return sendJson(res, 401, { error: 'Log in with Discord first.' });
+      const [code, error] = await (act === 'join' ? webJoin(g, s) : webLeave(g, s));
+      return sendJson(res, code, error ? { error } : { ok: true });
+    }
+    if (!['participants', 'config', 'end', 'reroll', 'delete', 'edit', 'remove'].includes(act)) return sendJson(res, 404, { error: 'Unknown action.' });
+    const a = await authGuild(req, res, g.guildId);
+    if (!a) return;
+    if (!a.manage) return sendJson(res, 403, { error: 'You need Manage Server or a manager role.' });
+    if (act === 'participants') {
+      const list = Object.entries(g.entries).slice(0, 200);
+      return sendJson(res, 200, { total: Object.keys(g.entries).length, ended: g.ended, list: await Promise.all(list.map(async ([id, n]) => ({ id, username: await nameOf(id), entries: n }))) });
+    }
+    if (act === 'config') {
+      return sendJson(res, 200, { prize: g.prize, winners: g.winners, channelId: g.channelId, extra: Object.entries(g.extra || {}).map(([role, entries]) => ({ role, entries })),
+        bypass: g.bypass || [], req: g.req, claimTime: g.claimMs ? `${Math.max(1, Math.round(g.claimMs / 60000))} minutes` : '', winnersRole: g.winnersRole || '',
+        dmMessage: g.dmMessage || '', color: hex(g.color), endColor: hex(g.endColor), image: g.image || '', thumbnail: g.thumbnail || '' });
+    }
+    if (req.method !== 'POST') return sendJson(res, 405, { error: 'Use POST.' });
+    let r;
+    if (act === 'end') r = g.ended ? [400, 'That giveaway already ended.'] : (await endGiveaway(g), [200, null]);
+    else if (act === 'reroll') r = await rerollGiveaway(g);
+    else if (act === 'delete') r = await deleteGiveaway(g);
+    else { const body = await readBody(req); r = act === 'edit' ? await editGiveaway(g, body) : await removeParticipant(g, String(body.userId || '')); }
+    return sendJson(res, r[0], r[1] ? { error: r[1] } : { ok: true });
+  }
+
+  if (p === '/dashboard' || /^\/dashboard\/server\/\d+\/?$/.test(p) || /^\/giveaway\/\d+\/?$/.test(p)) return servePage(res, 'dashboard.html');
   return servePage(res, 'index.html');
 }
 // Serves the website and gives Render + uptime pings something to hit
 require('http').createServer((req, res) => {
-  handle(req, res).catch((e) => { console.error(e); if (!res.headersSent) { res.statusCode = 500; res.end('Server error'); } });
+  handle(req, res).catch((e) => {
+    console.error(e);
+    if (res.headersSent) return;
+    if (req.url.startsWith('/api')) return sendJson(res, 500, { error: 'Something went wrong.' });
+    res.statusCode = 500; res.end('Server error');
+  });
 }).listen(process.env.PORT || 3000);
 
 initStorage().then(() => client.login(process.env.TOKEN)).catch((e) => { console.error(e); process.exit(1); });
