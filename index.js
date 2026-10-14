@@ -8,6 +8,8 @@ const {
 
 const TICK_ID = '1559999432597180516', CROSS_ID = '1559999451513487529';
 const TICK = `<:tick:${TICK_ID}>`, CROSS = `<:cross:${CROSS_ID}>`;
+const CONE_ID = '1560018755701186610', GIFT_ID = '1560018740362608721', MEMBERS_ID = '1560018723794845846';
+const CONE = `<:cone:${CONE_ID}>`, GIFT = `<:gift:${GIFT_ID}>`, MEMBERS = `<:members:${MEMBERS_ID}>`;
 const WEB_ID = '1560011706170736690', WEB = `<:website:${WEB_ID}>`;
 const withEmoji = (t) => String(t).replace(/✅/g, TICK).replace(/❌/g, CROSS);
 const BASE = (process.env.RENDER_EXTERNAL_URL || process.env.BASE_URL || '').replace(/\/$/, '');
@@ -141,8 +143,8 @@ function reqText(g) {
 }
 const enterRow = (g, disabled = false) => {
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('gw_enter').setLabel(String(Object.keys(g.entries).length)).setEmoji('🎉').setStyle(ButtonStyle.Primary).setDisabled(disabled),
-    new ButtonBuilder().setCustomId(`gw_parts:${g.messageId}`).setLabel('Participants').setEmoji('👥').setStyle(ButtonStyle.Secondary));
+    new ButtonBuilder().setCustomId('gw_enter').setLabel(String(Object.keys(g.entries).length)).setEmoji({ id: CONE_ID }).setStyle(ButtonStyle.Primary).setDisabled(disabled),
+    new ButtonBuilder().setCustomId(`gw_parts:${g.messageId}`).setLabel('Participants').setEmoji({ id: MEMBERS_ID }).setStyle(ButtonStyle.Secondary));
   return row;
 };
 
@@ -166,7 +168,7 @@ async function fetchMsg(g) {
 }
 const allClaimed = (g) => !!g.claimMs && g.winnerIds.length > 0 && g.winnerIds.every((w) => (g.claimed || []).includes(w));
 const gLink = (g) => `https://discord.com/channels/${g.guildId}/${g.channelId}/${g.messageId}`;
-const linkBtn = (g) => new ButtonBuilder().setLabel('Giveaway Message').setEmoji('🎁').setStyle(ButtonStyle.Link).setURL(gLink(g));
+const linkBtn = (g) => new ButtonBuilder().setLabel('Giveaway Message').setEmoji({ id: GIFT_ID }).setStyle(ButtonStyle.Link).setURL(gLink(g));
 const linkRow = (g) => new ActionRowBuilder().addComponents(linkBtn(g));
 const claimRow = (g, disabled = false) =>
   new ActionRowBuilder().addComponents(
@@ -183,14 +185,14 @@ async function announce(g, ch, winners) {
     const custom = g.dmMessage ? fill(g.dmMessage) : '';
     if (g.claimMs) {
       // Claim button is sent to the winner's DMs
-      const e = new EmbedBuilder().setColor(g.color).setTitle('🎉 You won!')
+      const e = new EmbedBuilder().setColor(g.color).setTitle(`${CONE} You won!`)
         .setDescription(`You won **${g.prize}** in **${guild?.name ?? 'a server'}**!\nClick **Claim** <t:${Math.floor(g.claimDeadline / 1000)}:R> or you'll be rerolled.${custom ? `\n\n${custom}` : ''}\n\n[Jump to giveaway](${link})`);
       try {
         const u = await client.users.fetch(w);
         await u.send({ embeds: [e], components: [claimRow(g)] });
       } catch { failed.push(w); }
     } else if (custom) {
-      const e = new EmbedBuilder().setColor(g.color).setTitle('🎉 You won!').setDescription(`${custom}\n\n[Jump to giveaway](${link})`);
+      const e = new EmbedBuilder().setColor(g.color).setTitle(`${CONE} You won!`).setDescription(`${custom}\n\n[Jump to giveaway](${link})`);
       client.users.fetch(w).then((u) => u.send({ embeds: [e], components: [linkRow(g)] })).catch(() => {});
     }
   }
@@ -207,7 +209,7 @@ async function announce(g, ch, winners) {
   }
   if (!payload.components) payload.components = [linkRow(g)];
   if (winners.length) payload.content = winners.map((w) => `<@${w}>`).join(' ');   // ping
-  payload.embeds = [new EmbedBuilder().setColor(winners.length ? 0x57f287 : 0xed4245).setTitle('🎉 Giveaway ended').setDescription(desc)];
+  payload.embeds = [new EmbedBuilder().setColor(winners.length ? 0x57f287 : 0xed4245).setTitle(`${CONE} Giveaway ended`).setDescription(desc)];
   await ch.send(payload).catch(() => {});
 }
 async function endGiveaway(g) {
@@ -331,10 +333,10 @@ const blacklistCmd = new SlashCommandBuilder().setName('blacklist').setDescripti
   .addSubcommand((s) => s.setName('list').setDescription('View everyone who is blacklisted'));
 
 function helpMessage() {
-  const e = new EmbedBuilder().setColor(0x5865f2).setTitle('🎉 Givevanced Help')
-    .setDescription('The free, advanced giveaway bot. Click the 🎉 button on a giveaway to enter, and click it again to leave.')
+  const e = new EmbedBuilder().setColor(0x5865f2).setTitle(`${CONE} Givevanced Help`)
+    .setDescription(`The free, advanced giveaway bot. Click the ${CONE} button on a giveaway to enter, and click it again to leave.`)
     .addFields(
-      { name: '🎁 Giveaways', value: '`/giveaway create` start a giveaway\n`/giveaway schedule` start one later\n`/giveaway scheduled` and `unschedule` view or cancel them\n`/giveaway end` end one early\n`/giveaway reroll` pick new winners\n`/giveaway edit` change the prize, winners or time\n`/giveaway delete` remove a giveaway\n`/giveaway fix` repair one that failed to end\n`/giveaway participants` see who entered' },
+      { name: `${GIFT} Giveaways`, value: '`/giveaway create` start a giveaway\n`/giveaway schedule` start one later\n`/giveaway scheduled` and `unschedule` view or cancel them\n`/giveaway end` end one early\n`/giveaway reroll` pick new winners\n`/giveaway edit` change the prize, winners or time\n`/giveaway delete` remove a giveaway\n`/giveaway fix` repair one that failed to end\n`/giveaway participants` see who entered' },
       { name: '🛠️ Setup', value: '`/giveaway manager-roles` who can use every command\n`/giveaway creator-roles` who can only create giveaways\n`/blacklist add`, `remove`, `list` block people from entering' },
       { name: '📊 Other', value: '`/messages` message counts for you or another user\n`/help` this menu' },
       { name: '✨ Good to know', value: '• Winners get a **Claim** button in their DMs when a claim time is set\n• Requirements: roles, boosting, server tag and message counts\n• Commands that need a giveaway let you pick it from a list\n• Create and manage giveaways from the website dashboard' })
@@ -668,7 +670,7 @@ async function partsView(i, g, page, notice = '') {
   const mine = g.entries[i.user.id] || 0;
   const chance = (totalEntries ? (mine / totalEntries) * 100 : 0).toFixed(1).replace(/\.0$/, '');
   const lines = slice.map((id, n) => `${(page - 1) * PAGE + n + 1}. <@${id}> (**${g.entries[id]}** ${g.entries[id] === 1 ? 'entry' : 'entries'})`);
-  const e = new EmbedBuilder().setColor(0xe67e22).setTitle(`👥 Giveaway Participants (Page ${page}/${pages})`)
+  const e = new EmbedBuilder().setColor(0xe67e22).setTitle(`${MEMBERS} Giveaway Participants (Page ${page}/${pages})`)
     .setDescription(`These are the members that have participated in the giveaway of **${g.prize}**:\n\n${lines.join('\n') || '*Nobody has joined yet.*'}\n\nTotal Participants: **${ids.length}**\nTotal Entries: **${totalEntries}**\n\nYour Entries: **${mine}**\nYour Chance of Winning: **${chance}%**`);
   const nav = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`gw_pg:${g.messageId}:${page - 1}`).setEmoji('◀️').setStyle(ButtonStyle.Secondary).setDisabled(page <= 1),
