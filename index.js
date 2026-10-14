@@ -6,7 +6,7 @@ const {
   TextInputStyle, REST, Routes, PermissionFlagsBits, MessageFlags, ChannelType,
 } = require('discord.js');
 
-const BASE = (process.env.BASE_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/$/, '');
+const BASE = (process.env.RENDER_EXTERNAL_URL || process.env.BASE_URL || '').replace(/\/$/, '');
 
 // Turns plain-text interaction replies into embeds (mentions that must ping are sent separately as content)
 const RED = /^(❌|⚠️|invalid|you need|you are not|not allowed|giveaway not found|something went wrong|only managers|that giveaway|this giveaway has ended|pick a text|please enter|the claim time|you already|you were removed)/i;
@@ -650,7 +650,7 @@ const sessions = () => (db.sessions ??= {});
 const parseCookies = (req) => Object.fromEntries((req.headers.cookie || '').split(';').map((c) => c.trim().split(/=(.*)/s).slice(0, 2)).filter((p) => p[0]));
 function setCookie(res, name, val, maxAge) {
   const prev = [].concat(res.getHeader('Set-Cookie') || []);
-  prev.push(`${name}=${val}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${BASE.startsWith('https') ? '; Secure' : ''}`);
+  prev.push(`${name}=${val}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${res.gvSecure ? '; Secure' : ''}`);
   res.setHeader('Set-Cookie', prev);
 }
 const sendJson = (res, code, obj) => { res.statusCode = code; res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store'); res.end(JSON.stringify(obj)); };
@@ -662,7 +662,7 @@ function getSession(req) {
   return s;
 }
 const avatarUrl = (id, hash) => hash ? `https://cdn.discordapp.com/avatars/${id}/${hash}.png?size=64` : `https://cdn.discordapp.com/embed/avatars/${Number((BigInt(id) >> 22n) % 6n)}.png`;
-const loginReady = () => !!(BASE && process.env.CLIENT_ID && process.env.CLIENT_SECRET);
+const loginReady = () => !!(process.env.CLIENT_ID && process.env.CLIENT_SECRET);
 
 function reqLines(g, guild) {
   const r = g.req, role = (id) => '@' + (guild?.roles.cache.get(id)?.name || 'role'), l = [];
@@ -723,6 +723,9 @@ function servePage(res, name) {
 
 async function handle(req, res) {
   const url = new URL(req.url, 'http://x'), p = url.pathname;
+  const proto = String(req.headers['x-forwarded-proto'] || 'http').split(',')[0].trim();
+  const site = `${proto}://${req.headers['x-forwarded-host'] || req.headers.host}`;   // the address the visitor is actually on
+  res.gvSecure = proto === 'https';
   res.setHeader('X-Content-Type-Options', 'nosniff');
   if (req.method !== 'GET' && req.method !== 'HEAD' && req.headers.origin) {
     // Only allow requests that come from this site itself (compare hosts, so BASE_URL typos can't lock people out)
@@ -741,13 +744,13 @@ async function handle(req, res) {
     const next = url.searchParams.get('next');
     if (next && /^\/[^/\\]/.test(next)) setCookie(res, 'gv_next', encodeURIComponent(next), 600);
     return redirect(res, 'https://discord.com/oauth2/authorize?' + new URLSearchParams({
-      client_id: process.env.CLIENT_ID, redirect_uri: `${BASE}/callback`, response_type: 'code', scope: 'identify guilds', state, prompt: 'none' }));
+      client_id: process.env.CLIENT_ID, redirect_uri: `${site}/callback`, response_type: 'code', scope: 'identify guilds', state, prompt: 'none' }));
   }
   if (p === '/callback') {
     const ck = parseCookies(req), code = url.searchParams.get('code'), state = url.searchParams.get('state');
     if (!loginReady() || !code || !state || state !== ck.gv_state) return redirect(res, '/dashboard?error=login');
     const tok = await fetch('https://discord.com/api/oauth2/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ client_id: process.env.CLIENT_ID, client_secret: process.env.CLIENT_SECRET, grant_type: 'authorization_code', code, redirect_uri: `${BASE}/callback` }) }).then((r) => r.json());
+      body: new URLSearchParams({ client_id: process.env.CLIENT_ID, client_secret: process.env.CLIENT_SECRET, grant_type: 'authorization_code', code, redirect_uri: `${site}/callback` }) }).then((r) => r.json());
     if (!tok.access_token) return redirect(res, '/dashboard?error=login');
     const auth = { headers: { Authorization: `Bearer ${tok.access_token}` } };
     const [user, guilds] = await Promise.all([fetch('https://discord.com/api/users/@me', auth).then((r) => r.json()), fetch('https://discord.com/api/users/@me/guilds', auth).then((r) => r.json())]);
