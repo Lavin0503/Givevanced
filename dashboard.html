@@ -76,7 +76,8 @@ h3.sec{font-size:15px;margin:24px 0 12px;color:var(--accent)}
 <script>
 const app=document.getElementById('app'),nr=document.getElementById('nr');
 const EMO=(id,alt)=>`<img class="emo" src="https://cdn.discordapp.com/emojis/${id}.png?size=40" alt="${alt}">`;
-const TICK=EMO('1559996000418930729','✅'),CROSS=EMO('1559996312366354572','❌');
+const TICK=EMO('1559999432597180516','✅'),CROSS=EMO('1559999451513487529','❌');
+const CONE=EMO('1560018755701186610','🎉');
 const emo=t=>String(t).replace(/✅/g,TICK).replace(/❌/g,CROSS);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function api(p,o){const r=await fetch(p,{credentials:'same-origin',...o});let d={};try{d=await r.json()}catch{}return{ok:r.ok,d}}
@@ -114,7 +115,7 @@ async function detail(id,me){
   else if(!me.user)act=me.loginReady?`<a class="btn dc" href="${loginUrl()}">Login with Discord to join</a>`:`<p class="msg bad">Login isn't set up yet.</p>`;
   else if(m.entered)act=`<div class="msg ok">${TICK} You're in${m.entries>1?` with ${m.entries} entries`:''}!</div><button class="btn bad" id="leave">Leave giveaway</button>`;
   else if(m.removed)act=`<div class="msg bad">You were removed from this giveaway by a moderator.</div>`;
-  else if(m.canJoin)act=`<button class="btn main" id="join">🎉 Join giveaway</button>`;
+  else if(m.canJoin)act=`<button class="btn main" id="join">${CONE} Join giveaway</button>`;
   else act=`<div class="msg bad">${esc(m.reason)}</div><button class="btn" disabled>Can't join</button>`;
   const win=g.ended?`<h2>Winners</h2><div class="card">${g.winnerNames.length?g.winnerNames.map(n=>`<div class="t" style="font-size:16px">🏆 ${esc(n)}</div>`).join(''):'<span class="muted">No valid entries.</span>'}</div>`:'';
   app.innerHTML=`<a class="muted" href="/dashboard">← Back to dashboard</a>
@@ -207,7 +208,7 @@ function tabCreate(t){
   <h3 class="sec">Look</h3>
   <div class="f2"><div class="f"><label>Embed colour</label><input id="f_color" type="color" value="#5865f2"></div><div class="f"><label>Colour after it ends</label><input id="f_ecolor" type="color" value="#2b2d31"></div></div>
   <div class="f2"><div class="f"><label>Image URL (https)</label><input id="f_image" placeholder="https://..."></div><div class="f"><label>Thumbnail URL (https)</label><input id="f_thumb" placeholder="https://..."></div></div>
-  <div class="acts" style="margin-top:8px"><button class="btn main" id="f_go">🎉 Create giveaway</button></div></div>`;
+  <div class="acts" style="margin-top:8px"><button class="btn main" id="f_go">${CONE} Create giveaway</button></div></div>`;
   document.getElementById('addx').onclick=()=>addXRow();
   document.getElementById('f_go').onclick=async e=>{
     e.target.disabled=true;
