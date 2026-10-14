@@ -184,6 +184,7 @@ footer .wrap{align-items:center}.legal{flex-basis:100%;font-size:12px;opacity:.8
   <span class="eyebrow">FAQ</span><h2>Questions, <span>answered.</span></h2><br>
   <details><summary>Who can create giveaways?</summary><p>Anyone with Manage Server, a manager role, or a creator role. Set the roles with /giveaway manager-roles and /giveaway creator-roles.</p></details>
   <details><summary>Is there a website dashboard?</summary><p>Yes. Log in with Discord on the Dashboard to join giveaways, and if you manage a server you can create, edit, end, reroll and delete giveaways, see and remove participants, clone past giveaways, set manager and creator roles and view stats. Every giveaway embed also has a Website button that opens its page.</p></details>
+  <details><summary>Can I block someone from giveaways?</summary><p>Yes. Use /blacklist add to stop a person from joining any giveaway in your server. They're removed from live giveaways straight away. You can also manage the blacklist from the Dashboard, and use /blacklist remove or /blacklist list.</p></details>
   <details><summary>Can I leave a giveaway after joining?</summary><p>Yes. Click Enter again and the bot privately tells you that you already joined, with a button to leave.</p></details>
   <details><summary>What if a winner has DMs closed?</summary><p>Givevanced posts the Claim button in the giveaway channel instead, and pings the winner there.</p></details>
   <details><summary>How do message requirements work?</summary><p>The bot counts messages sent after it joins. Requirements can be daily, weekly, monthly or total.</p></details>
@@ -209,7 +210,8 @@ document.getElementById('yr').textContent=new Date().getFullYear();
 const data={
  'Giveaways':[['/giveaway create','Start a giveaway with requirements and extras'],['/giveaway end','End a giveaway early with its message ID'],['/giveaway reroll','Pick new winners for an ended giveaway'],['/giveaway participants','See everyone who entered']],
  'Manage':[['/giveaway edit','Change the prize, winners or end time'],['/giveaway delete','Remove a giveaway'],['/giveaway fix','Repair a giveaway that failed to end'],['/messages','View message counts for you or another user']],
- 'Setup':[['/giveaway manager-roles','Roles that can use every command'],['/giveaway creator-roles','Roles that can only create giveaways']]
+ 'Moderation':[['/blacklist add','Stop a person from joining giveaways'],['/blacklist remove','Let a blacklisted person join again'],['/blacklist list','See everyone who is blacklisted']],
+ 'Setup':[['/giveaway manager-roles','Roles that can use every command'],['/giveaway creator-roles','Roles that can only create giveaways'],['/help','Show every command and how to use it']]
 };
 const tabs=document.getElementById('tabs'),box=document.getElementById('cmds');
 function show(k){[...tabs.children].forEach(b=>b.setAttribute('aria-selected',b.textContent===k));box.innerHTML='';data[k].forEach(([c,d])=>{const b=document.createElement('button');b.className='cmd';b.innerHTML='<code></code><span></span>';b.firstChild.textContent=c;b.lastChild.textContent=d;b.onclick=()=>{try{navigator.clipboard.writeText(c)}catch(e){}toast('Copied '+c)};box.appendChild(b)})}
