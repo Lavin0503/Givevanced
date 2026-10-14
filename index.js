@@ -3,7 +3,7 @@ const fs = require('fs');
 const {
   Client, GatewayIntentBits, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder,
   ButtonBuilder, ButtonStyle, RoleSelectMenuBuilder, StringSelectMenuBuilder, ModalBuilder, TextInputBuilder,
-  TextInputStyle, REST, Routes, PermissionFlagsBits, MessageFlags, ChannelType,
+  TextInputStyle, REST, Routes, PermissionFlagsBits, MessageFlags, ChannelType, ActivityType,
 } = require('discord.js');
 
 const BASE = (process.env.RENDER_EXTERNAL_URL || process.env.BASE_URL || '').replace(/\/$/, '');
@@ -46,6 +46,13 @@ const save = () => {
     else fs.writeFileSync(FILE, JSON.stringify(db));
   }, 1000);
 };
+function blacklistOf(gid) { return (guildCfg(gid).blacklist ??= []); }
+async function addBlacklist(gid, uid) {
+  const bl = blacklistOf(gid);
+  if (!bl.includes(uid)) bl.push(uid);
+  for (const g of Object.values(db.giveaways)) if (g.guildId === gid && !g.ended && g.entries[uid]) { delete g.entries[uid]; refreshMessage(g); }
+  save();
+}
 const guildCfg = (id) => (db.guilds[id] ??= { creatorRoles: [], managerRoles: [] });
 
 /* ───────────── helpers ───────────── */
@@ -150,9 +157,13 @@ async function fetchMsg(g) {
   return { ch, msg: ch ? await ch.messages.fetch(g.messageId).catch(() => null) : null };
 }
 const allClaimed = (g) => !!g.claimMs && g.winnerIds.length > 0 && g.winnerIds.every((w) => (g.claimed || []).includes(w));
+const gLink = (g) => `https://discord.com/channels/${g.guildId}/${g.channelId}/${g.messageId}`;
+const linkBtn = (g) => new ButtonBuilder().setLabel('Giveaway Message').setEmoji('🎁').setStyle(ButtonStyle.Link).setURL(gLink(g));
+const linkRow = (g) => new ActionRowBuilder().addComponents(linkBtn(g));
 const claimRow = (g, disabled = false) =>
   new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`gw_claim:${g.messageId}`).setLabel(disabled ? 'Claimed' : 'Claim').setEmoji('🎁').setStyle(ButtonStyle.Success).setDisabled(disabled));
+    new ButtonBuilder().setCustomId(`gw_claim:${g.messageId}`).setLabel(disabled ? 'Claimed' : 'Claim').setEmoji('✅').setStyle(ButtonStyle.Success).setDisabled(disabled),
+    linkBtn(g));
 
 async function announce(g, ch, winners) {
   const guild = await client.guilds.fetch(g.guildId).catch(() => null);
@@ -172,7 +183,7 @@ async function announce(g, ch, winners) {
       } catch { failed.push(w); }
     } else if (custom) {
       const e = new EmbedBuilder().setColor(g.color).setTitle('🎉 You won!').setDescription(`${custom}\n\n[Jump to giveaway](${link})`);
-      client.users.fetch(w).then((u) => u.send({ embeds: [e] })).catch(() => {});
+      client.users.fetch(w).then((u) => u.send({ embeds: [e], components: [linkRow(g)] })).catch(() => {});
     }
   }
   let desc = winners.length
@@ -186,6 +197,7 @@ async function announce(g, ch, winners) {
       payload.components = [claimRow(g)];
     }
   }
+  if (!payload.components) payload.components = [linkRow(g)];
   if (winners.length) payload.content = winners.map((w) => `<@${w}>`).join(' ');   // ping
   payload.embeds = [new EmbedBuilder().setColor(winners.length ? 0x57f287 : 0xed4245).setTitle('🎉 Giveaway ended').setDescription(desc)];
   await ch.send(payload).catch(() => {});
@@ -225,6 +237,7 @@ setInterval(async () => {
 const checkEntry = (i, g) => checkEntryFor(i.member, i.user.id, i.guildId, g);
 async function checkEntryFor(m, uid, gid, g) {
   const r = g.req;
+  if (blacklistOf(gid).includes(uid)) return '🚫 You are blacklisted from giveaways in this server.';
   if (g.bypass.some((x) => m.roles.cache.has(x))) return null;
   const s = statsOf(gid, uid);
   if (r.roles.length && !r.roles.every((x) => m.roles.cache.has(x))) return 'You are missing a required role.';
@@ -292,13 +305,51 @@ gw.addSubcommand((s) => idOpt(s.setName('reroll').setDescription('Reroll the win
 const messagesCmd = new SlashCommandBuilder().setName('messages').setDescription('View the number of messages you/other user has sent').setDMPermission(false)
   .addUserOption((o) => o.setName('user').setDescription('User to look up'));
 
+const helpCmd = new SlashCommandBuilder().setName('help').setDescription('How to use Givevanced').setDMPermission(false);
+const blacklistCmd = new SlashCommandBuilder().setName('blacklist').setDescription('Stop people from joining giveaways in this server').setDMPermission(false)
+  .addSubcommand((s) => s.setName('add').setDescription('Blacklist a person').addUserOption((o) => o.setName('user').setDescription('The person to blacklist').setRequired(true)))
+  .addSubcommand((s) => s.setName('remove').setDescription('Remove a person from the blacklist').addUserOption((o) => o.setName('user').setDescription('The person to remove').setRequired(true)))
+  .addSubcommand((s) => s.setName('list').setDescription('View everyone who is blacklisted'));
+
+function helpMessage() {
+  const e = new EmbedBuilder().setColor(0x5865f2).setTitle('🎉 Givevanced Help')
+    .setDescription('The free, advanced giveaway bot. Click the 🎉 button on a giveaway to enter, and click it again to leave.')
+    .addFields(
+      { name: '🎁 Giveaways', value: '`/giveaway create` start a giveaway\n`/giveaway end` end one early\n`/giveaway reroll` pick new winners\n`/giveaway edit` change the prize, winners or time\n`/giveaway delete` remove a giveaway\n`/giveaway fix` repair one that failed to end\n`/giveaway participants` see who entered' },
+      { name: '🛠️ Setup', value: '`/giveaway manager-roles` who can use every command\n`/giveaway creator-roles` who can only create giveaways\n`/blacklist add`, `remove`, `list` block people from entering' },
+      { name: '📊 Other', value: '`/messages` message counts for you or another user\n`/help` this menu' },
+      { name: '✨ Good to know', value: '• Winners get a **Claim** button in their DMs when a claim time is set\n• Requirements: roles, boosting, server tag and message counts\n• Create and manage giveaways from the website dashboard' })
+    .setFooter({ text: 'Made by @lav1nrules' });
+  const row = new ActionRowBuilder();
+  if (BASE) row.addComponents(new ButtonBuilder().setLabel('Dashboard').setStyle(ButtonStyle.Link).setURL(`${BASE}/dashboard`));
+  row.addComponents(new ButtonBuilder().setLabel('Add to your server').setStyle(ButtonStyle.Link).setURL(`https://discord.com/oauth2/authorize?client_id=${process.env.CLIENT_ID}&permissions=268520448&scope=bot%20applications.commands`));
+  return { embeds: [e], components: [row] };
+}
+async function blacklistCommand(i) {
+  if (!isManager(i)) return i.reply({ content: 'You need Manage Server or a manager role.', ...eph });
+  const sub = i.options.getSubcommand(), bl = blacklistOf(i.guildId);
+  if (sub === 'list') return i.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle('🚫 Giveaway blacklist')
+    .setDescription(bl.map((u, n) => `${n + 1}. <@${u}>`).join('\n').slice(0, 4000) || 'Nobody is blacklisted.')], allowedMentions: { parse: [] }, ...eph });
+  const u = i.options.getUser('user');
+  if (sub === 'add') {
+    if (u.bot) return i.reply({ content: "❌ You can't blacklist a bot.", ...eph });
+    await addBlacklist(i.guildId, u.id);
+    return i.reply({ content: `✅ <@${u.id}> is blacklisted. They were removed from live giveaways and can't join new ones.`, allowedMentions: { parse: [] }, ...eph });
+  }
+  const idx = bl.indexOf(u.id);
+  if (idx < 0) return i.reply({ content: '❌ That person is not blacklisted.', ...eph });
+  bl.splice(idx, 1); save();
+  return i.reply({ content: `✅ <@${u.id}> was removed from the blacklist.`, allowedMentions: { parse: [] }, ...eph });
+}
+
 client.once('ready', async () => {
   const rest = new REST().setToken(process.env.TOKEN);
-  const body = [gw, messagesCmd].map((c) => c.toJSON());
+  const body = [gw, messagesCmd, helpCmd, blacklistCmd].map((c) => c.toJSON());
   const route = process.env.GUILD_ID
     ? Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID)
     : Routes.applicationCommands(process.env.CLIENT_ID);
   await rest.put(route, { body });
+  client.user.setPresence({ activities: [{ name: 'givevanced.onrender.com | Made by @lav1nrules', type: ActivityType.Playing }], status: 'online' });
   console.log(`Givevanced online as ${client.user.tag}`);
 });
 
@@ -332,6 +383,8 @@ client.on('interactionCreate', async (i) => {
         { name: 'Total', value: String(s.total), inline: true })] });
     }
 
+    if (i.commandName === 'help') return i.reply({ ...helpMessage(), ...eph });
+    if (i.commandName === 'blacklist') return await blacklistCommand(i);
     const sub = i.options.getSubcommand();
     if (sub === 'manager-roles' || sub === 'creator-roles') {
       if (!i.memberPermissions.has(PermissionFlagsBits.ManageGuild) && !isManager(i))
@@ -496,12 +549,12 @@ async function onButton(i) {
     g.claimed.push(i.user.id);
     if (allClaimed(g)) g.claimDeadline = null;
     save();
-    if (i.inGuild()) await i.reply({ content: '✅ Prize claimed! The host has been notified.', ...eph });
+    if (i.inGuild()) await i.reply({ content: '✅ Prize claimed! The host has been notified.', components: [linkRow(g)], ...eph });
     else await i.update({ content: '✅ Prize claimed! The host has been notified.', components: [claimRow(g, true)] });
     const { ch, msg } = await fetchMsg(g);
     if (msg) await msg.edit({ embeds: [embedFor(g, true)] }).catch(() => {});
     if (ch) await ch.send({ content: `<@${i.user.id}> <@${g.host}>`, embeds: [new EmbedBuilder().setColor(0x57f287).setTitle('✅ Prize claimed')
-      .setDescription(`<@${i.user.id}> claimed **${g.prize}**! <@${g.host}>, they're ready for their prize.`)], allowedMentions: { users: [i.user.id, g.host] } }).catch(() => {});
+      .setDescription(`<@${i.user.id}> claimed **${g.prize}**! <@${g.host}>, they're ready for their prize.`)], components: [linkRow(g)], allowedMentions: { users: [i.user.id, g.host] } }).catch(() => {});
     return;
   }
 }
@@ -797,7 +850,7 @@ async function handle(req, res) {
     }));
     return sendJson(res, 200, { servers: out.filter(Boolean) });
   }
-  const sm = p.match(/^\/api\/server\/(\d+)(?:\/(giveaway|roles))?$/);
+  const sm = p.match(/^\/api\/server\/(\d+)(?:\/(giveaway|roles|blacklist))?$/);
   if (sm) {
     const a = await authGuild(req, res, sm[1]);
     if (!a) return;
@@ -807,12 +860,13 @@ async function handle(req, res) {
       const live = all.filter((g) => !g.ended).sort((x, y) => x.endsAt - y.endsAt), ended = all.filter((g) => g.ended).sort((x, y) => y.endsAt - x.endsAt).slice(0, 25);
       const top = Object.entries(db.stats[guild.id] || {}).sort((x, y) => y[1].total - x[1].total).slice(0, 10);
       const me = guild.members.me;
+      const blacklist = a.manage ? await Promise.all(blacklistOf(guild.id).map(async (id) => ({ id, username: await nameOf(id) }))) : [];
       return sendJson(res, 200, {
         id: guild.id, name: guild.name, icon: guild.iconURL({ size: 128 }), flags: { manage: a.manage, create: a.create },
         channels: [...guild.channels.cache.values()].filter((c) => (c.type === ChannelType.GuildText || c.type === ChannelType.GuildAnnouncement) && c.permissionsFor(me)?.has(['ViewChannel', 'SendMessages', 'EmbedLinks']))
           .sort((x, y) => x.rawPosition - y.rawPosition).map((c) => ({ id: c.id, name: c.name })),
         roles: [...guild.roles.cache.values()].filter((r) => r.id !== guild.id && !r.managed).sort((x, y) => y.position - x.position).map((r) => ({ id: r.id, name: r.name })),
-        settings: a.manage ? { creatorRoles: guildCfg(guild.id).creatorRoles, managerRoles: guildCfg(guild.id).managerRoles } : null,
+        settings: a.manage ? { creatorRoles: guildCfg(guild.id).creatorRoles, managerRoles: guildCfg(guild.id).managerRoles, blacklist } : null,
         live: live.map((g) => gSummary(g, guild)), ended: ended.map((g) => gSummary(g, guild)),
         stats: { live: live.length, hosted: all.length, entries: live.reduce((n, g) => n + Object.keys(g.entries).length, 0), members: guild.memberCount },
         top: await Promise.all(top.map(async ([id, st]) => ({ id, username: await nameOf(id), total: st.total }))),
@@ -826,6 +880,13 @@ async function handle(req, res) {
       return sendJson(res, code, error ? { error } : { ok: true, ...extra });
     }
     if (!a.manage) return sendJson(res, 403, { error: 'You need Manage Server or a manager role.' });
+    if (sm[2] === 'blacklist') {
+      const uid = String(body.userId || '').trim();
+      if (!/^\d{15,22}$/.test(uid)) return sendJson(res, 400, { error: 'Enter a valid Discord user ID.' });
+      if (body.action === 'remove') { const bl = blacklistOf(guild.id), i = bl.indexOf(uid); if (i >= 0) { bl.splice(i, 1); save(); } }
+      else await addBlacklist(guild.id, uid);
+      return sendJson(res, 200, { ok: true });
+    }
     const pick = (arr) => (Array.isArray(arr) ? arr : []).filter((r) => typeof r === 'string' && guild.roles.cache.has(r)).slice(0, 25);
     const cfg = guildCfg(guild.id);
     cfg.creatorRoles = pick(body.creatorRoles); cfg.managerRoles = pick(body.managerRoles); save();
