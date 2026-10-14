@@ -230,9 +230,15 @@ function tabSettings(t){
   const st=SV.settings,opts=ids=>SV.roles.map(r=>`<option value="${r.id}" ${ids.includes(r.id)?'selected':''}>${esc(r.name)}</option>`).join('');
   t.innerHTML=`<div class="card"><div class="t" style="margin-bottom:6px">Who can use the bot</div><p class="muted" style="margin-top:0">Members with Manage Server can always do everything.</p>
   <div class="f2"><div class="f"><label>Manager roles (can use every command)</label><select id="s_man" multiple>${opts(st.managerRoles)}</select></div><div class="f"><label>Creator roles (can only create giveaways)</label><select id="s_cre" multiple>${opts(st.creatorRoles)}</select></div></div>
-  <div class="hint" style="margin-bottom:14px">Hold Ctrl/Cmd to select several. Deselect all to clear.</div><button class="btn main" id="s_go">Save roles</button></div>`;
+  <div class="hint" style="margin-bottom:14px">Hold Ctrl/Cmd to select several. Deselect all to clear.</div><button class="btn main" id="s_go">Save roles</button></div>
+  <div class="card" style="margin-top:14px"><div class="t" style="margin-bottom:6px">Blacklist</div><p class="muted" style="margin-top:0">Blacklisted people can't join giveaways in this server. They're removed from live giveaways when added.</p>
+  <div id="bl">${(st.blacklist||[]).map(u=>`<div class="prow"><span>${esc(u.username)} <span class="muted">· ${u.id}</span></span><button class="btn sm bad" data-bl="${u.id}">Remove</button></div>`).join('')||'<p class="muted">Nobody is blacklisted.</p>'}</div>
+  <div class="f2" style="margin-top:14px"><input id="bl_id" placeholder="User ID to blacklist"><button class="btn main" id="bl_add">Blacklist user</button></div><div class="hint">In Discord, turn on Developer Mode, right-click a person and choose Copy User ID.</div></div>`;
   document.getElementById('s_go').onclick=async()=>{const x=await post('/api/server/'+SID+'/roles',{managerRoles:sel('s_man'),creatorRoles:sel('s_cre')});
     if(x.ok){await server(SID,ME);flash('✅ Roles saved.',true)}else flash(esc(x.d.error),false)};
+  const bl=async(action,userId,msg)=>{const x=await post('/api/server/'+SID+'/blacklist',{action,userId});if(x.ok){await server(SID,ME);flash(msg,true)}else flash(esc(x.d.error),false)};
+  document.getElementById('bl_add').onclick=()=>bl('add',val('bl_id').trim(),'✅ User blacklisted.');
+  t.querySelectorAll('[data-bl]').forEach(b=>b.onclick=()=>confirm('Remove this person from the blacklist?')&&bl('remove',b.dataset.bl,'✅ Removed from the blacklist.'));
 }
 function tabStats(t){
   const s=SV.stats;
