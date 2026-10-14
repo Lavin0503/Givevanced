@@ -107,6 +107,7 @@ footer .wrap{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .by::after{content:attr(data-tip);position:absolute;left:50%;bottom:calc(100% + 10px);transform:translate(-50%,6px);background:var(--text);color:var(--bg);padding:6px 12px;border-radius:8px;font-size:13px;font-weight:600;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s}
 .by:hover::after,.by:focus::after{opacity:1;transform:translate(-50%,0)}
 footer .wrap{align-items:center}.legal{flex-basis:100%;font-size:12px;opacity:.8}
+.emo{width:1.25em;height:1.25em;vertical-align:-.25em;margin-right:4px}
 @media(max-width:560px){.nr .invite{display:none}}
 @media(max-width:860px){.grid2{grid-template-columns:1fr;gap:40px}.embed{margin:0 auto}.feat,.steps{grid-template-columns:1fr}.cmds{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,1fr)}.links{display:none}.sec{padding:60px 0}.hero{padding-top:48px}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
@@ -136,7 +137,7 @@ footer .wrap{align-items:center}.legal{flex-basis:100%;font-size:12px;opacity:.8
       <ul><li>Role: @Member</li><li>100+ messages this week</li><li>Booster extra entries ×5</li></ul>
     </div>
     <button class="btn enter" id="enterBtn">🎉 Enter</button>
-    <div class="eph" id="eph" hidden><small>👁 Only you can see this</small><p>✅ You've already joined this giveaway (1 entry).</p><button class="btn" id="leaveBtn">Leave giveaway</button></div>
+    <div class="eph" id="eph" hidden><small>👁 Only you can see this</small><p><img class="emo" src="https://cdn.discordapp.com/emojis/1559996000418930729.png?size=40" alt="✅"> You've already joined this giveaway (1 entry).</p><button class="btn" id="leaveBtn">Leave giveaway</button></div>
   </div>
 </div>
 <div class="wrap"><div class="stats">
@@ -184,6 +185,7 @@ footer .wrap{align-items:center}.legal{flex-basis:100%;font-size:12px;opacity:.8
   <span class="eyebrow">FAQ</span><h2>Questions, <span>answered.</span></h2><br>
   <details><summary>Who can create giveaways?</summary><p>Anyone with Manage Server, a manager role, or a creator role. Set the roles with /giveaway manager-roles and /giveaway creator-roles.</p></details>
   <details><summary>Is there a website dashboard?</summary><p>Yes. Log in with Discord on the Dashboard to join giveaways, and if you manage a server you can create, edit, end, reroll and delete giveaways, see and remove participants, clone past giveaways, set manager and creator roles and view stats. Every giveaway embed also has a Website button that opens its page.</p></details>
+  <details><summary>Can I schedule a giveaway for later?</summary><p>Yes. Use /giveaway schedule with a start time like 2 hours or 1 day, plus the usual options. It starts by itself, and you can see or cancel scheduled ones with /giveaway scheduled and /giveaway unschedule. Commands that need a giveaway let you pick it from a list, so there's no need to copy message IDs.</p></details>
   <details><summary>Can I block someone from giveaways?</summary><p>Yes. Use /blacklist add to stop a person from joining any giveaway in your server. They're removed from live giveaways straight away. You can also manage the blacklist from the Dashboard, and use /blacklist remove or /blacklist list.</p></details>
   <details><summary>Can I leave a giveaway after joining?</summary><p>Yes. Click Enter again and the bot privately tells you that you already joined, with a button to leave.</p></details>
   <details><summary>What if a winner has DMs closed?</summary><p>Givevanced posts the Claim button in the giveaway channel instead, and pings the winner there.</p></details>
@@ -208,8 +210,8 @@ const toast=m=>{const t=document.getElementById('toast');t.textContent=m;t.class
 document.querySelectorAll('.invite').forEach(a=>{if(ok){a.href=url;a.target='_blank';a.rel='noopener'}else a.addEventListener('click',e=>{e.preventDefault();toast('Invite link works once CLIENT_ID is set')})});
 document.getElementById('yr').textContent=new Date().getFullYear();
 const data={
- 'Giveaways':[['/giveaway create','Start a giveaway with requirements and extras'],['/giveaway end','End a giveaway early with its message ID'],['/giveaway reroll','Pick new winners for an ended giveaway'],['/giveaway participants','See everyone who entered']],
- 'Manage':[['/giveaway edit','Change the prize, winners or end time'],['/giveaway delete','Remove a giveaway'],['/giveaway fix','Repair a giveaway that failed to end'],['/messages','View message counts for you or another user']],
+ 'Giveaways':[['/giveaway create','Start a giveaway with requirements and extras'],['/giveaway end','End a giveaway early with its message ID'],['/giveaway schedule','Schedule a giveaway to start later'],['/giveaway reroll','Pick new winners for an ended giveaway'],['/giveaway participants','See everyone who entered']],
+ 'Manage':[['/giveaway edit','Change the prize, winners or end time'],['/giveaway delete','Remove a giveaway'],['/giveaway scheduled','See giveaways waiting to start'],['/giveaway unschedule','Cancel a scheduled giveaway'],['/giveaway fix','Repair a giveaway that failed to end'],['/messages','View message counts for you or another user']],
  'Moderation':[['/blacklist add','Stop a person from joining giveaways'],['/blacklist remove','Let a blacklisted person join again'],['/blacklist list','See everyone who is blacklisted']],
  'Setup':[['/giveaway manager-roles','Roles that can use every command'],['/giveaway creator-roles','Roles that can only create giveaways'],['/help','Show every command and how to use it']]
 };
