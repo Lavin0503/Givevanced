@@ -6,6 +6,18 @@ const {
   TextInputStyle, REST, Routes, PermissionFlagsBits, MessageFlags,
 } = require('discord.js');
 
+const BASE = (process.env.BASE_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/$/, '');
+
+// Turns plain-text interaction replies into embeds (mentions that must ping are sent separately as content)
+const RED = /^(❌|⚠️|invalid|you need|you are not|not allowed|giveaway not found|something went wrong|only managers|that giveaway|this giveaway has ended|pick a text|please enter|the claim time|you already|you were removed)/i;
+const GREEN = /^(✅|giveaway (created|deleted|updated|fixed)|rerolled|ending)/i;
+function embedify(o) {
+  if (typeof o === 'string') o = { content: o };
+  if (!o || typeof o !== 'object' || !o.content) return o;
+  const e = new EmbedBuilder().setColor(GREEN.test(o.content) ? 0x57f287 : RED.test(o.content) ? 0xed4245 : 0x5865f2).setDescription(o.content.slice(0, 4000));
+  return { ...o, content: '', embeds: [e, ...(o.embeds || [])] };
+}
+
 /* ───────────── storage (MongoDB if MONGODB_URI is set, otherwise a JSON file) ───────────── */
 const DATA_DIR = process.env.DATA_DIR || '.';
 const FILE = `${DATA_DIR}/data.json`;
@@ -90,6 +102,7 @@ function embedFor(g, ended = false) {
       `**Hosted by:** <@${g.host}>`,
       `**Winners:** ${g.winners}`,
       `**Entries:** ${Object.keys(g.entries).length}`,
+      BASE && g.messageId ? `🌐 [View on the website](${BASE}/giveaway/${g.messageId})` : '',
       reqText(g),
       ended ? `\n**Winner(s):** ${g.winnerIds.length ? g.winnerIds.map((w) => `<@${w}>${(g.claimed || []).includes(w) ? ' ✅' : ''}`).join(', ') : 'No valid entries'}` : '',
     ].filter(Boolean).join('\n'))
@@ -111,10 +124,13 @@ function reqText(g) {
     l.push('Extra entries: ' + Object.entries(g.extra).map(([id, n]) => `<@&${id}> ×${n}`).join(', '));
   return l.length ? `\n**Requirements**\n${l.map((x) => `• ${x}`).join('\n')}` : '';
 }
-const enterRow = (g, disabled = false) =>
-  new ActionRowBuilder().addComponents(
+const enterRow = (g, disabled = false) => {
+  const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('gw_enter').setLabel(String(Object.keys(g.entries).length)).setEmoji('🎉').setStyle(ButtonStyle.Primary).setDisabled(disabled),
     new ButtonBuilder().setCustomId(`gw_parts:${g.messageId}`).setLabel('Participants').setEmoji('👥').setStyle(ButtonStyle.Secondary));
+  if (BASE && g.messageId) row.addComponents(new ButtonBuilder().setLabel('Website').setEmoji('🌐').setStyle(ButtonStyle.Link).setURL(`${BASE}/giveaway/${g.messageId}`));
+  return row;
+};
 
 /* ───────────── core giveaway logic ───────────── */
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages] });
@@ -150,27 +166,29 @@ async function announce(g, ch, winners) {
     if (g.claimMs) {
       // Claim button is sent to the winner's DMs
       const e = new EmbedBuilder().setColor(g.color).setTitle('🎉 You won!')
-        .setDescription(`You won **${g.prize}** in **${guild?.name ?? 'a server'}**!\nClick **Claim** <t:${Math.floor(g.claimDeadline / 1000)}:R> or you'll be rerolled.\n[Jump to giveaway](${link})`);
+        .setDescription(`You won **${g.prize}** in **${guild?.name ?? 'a server'}**!\nClick **Claim** <t:${Math.floor(g.claimDeadline / 1000)}:R> or you'll be rerolled.${custom ? `\n\n${custom}` : ''}\n\n[Jump to giveaway](${link})`);
       try {
         const u = await client.users.fetch(w);
-        await u.send({ content: `<@${w}> ${custom}`.trim(), embeds: [e], components: [claimRow(g)] });
+        await u.send({ embeds: [e], components: [claimRow(g)] });
       } catch { failed.push(w); }
     } else if (custom) {
-      client.users.fetch(w).then((u) => u.send(custom)).catch(() => {});
+      const e = new EmbedBuilder().setColor(g.color).setTitle('🎉 You won!').setDescription(`${custom}\n\n[Jump to giveaway](${link})`);
+      client.users.fetch(w).then((u) => u.send({ embeds: [e] })).catch(() => {});
     }
   }
-  let content = winners.length
-    ? `🎉 Congratulations ${winners.map((w) => `<@${w}>`).join(', ')}! You won **${g.prize}**!`
+  let desc = winners.length
+    ? `Congratulations ${winners.map((w) => `<@${w}>`).join(', ')}! You won **${g.prize}**!`
     : `No valid entries for **${g.prize}**, so no winner was chosen.`;
   const payload = { allowedMentions: { users: winners } };
   if (g.claimMs && winners.length) {
-    if (failed.length < winners.length) content += `\n📬 Check your DMs to claim within <t:${Math.floor(g.claimDeadline / 1000)}:R>.`;
+    if (failed.length < winners.length) desc += `\n📬 Check your DMs to claim within <t:${Math.floor(g.claimDeadline / 1000)}:R>.`;
     if (failed.length) {
-      content += `\n${failed.map((w) => `<@${w}>`).join(', ')}: your DMs are closed, so claim here within <t:${Math.floor(g.claimDeadline / 1000)}:R>.`;
+      desc += `\n${failed.map((w) => `<@${w}>`).join(', ')}: your DMs are closed, so claim here within <t:${Math.floor(g.claimDeadline / 1000)}:R>.`;
       payload.components = [claimRow(g)];
     }
   }
-  payload.content = content;
+  if (winners.length) payload.content = winners.map((w) => `<@${w}>`).join(' ');   // ping
+  payload.embeds = [new EmbedBuilder().setColor(winners.length ? 0x57f287 : 0xed4245).setTitle('🎉 Giveaway ended').setDescription(desc)];
   await ch.send(payload).catch(() => {});
 }
 async function endGiveaway(g) {
@@ -205,16 +223,17 @@ setInterval(async () => {
 }, 5000);
 
 /* ───────────── requirement check on entry ───────────── */
-async function checkEntry(i, g) {
-  const m = i.member, r = g.req;
+const checkEntry = (i, g) => checkEntryFor(i.member, i.user.id, i.guildId, g);
+async function checkEntryFor(m, uid, gid, g) {
+  const r = g.req;
   if (g.bypass.some((x) => m.roles.cache.has(x))) return null;
-  const s = statsOf(i.guildId, i.user.id);
+  const s = statsOf(gid, uid);
   if (r.roles.length && !r.roles.every((x) => m.roles.cache.has(x))) return 'You are missing a required role.';
   if (r.boosts && !m.premiumSince) return 'You need to be boosting this server.';
   if (r.serverTag) {
-    const u = await client.users.fetch(i.user.id, { force: true }).catch(() => i.user);
+    const u = await client.users.fetch(uid, { force: true }).catch(() => ({}));
     const pg = u.primaryGuild;
-    if (!pg || pg.identityGuildId !== i.guildId || pg.identityEnabled === false) return "You need this server's tag equipped.";
+    if (!pg || pg.identityGuildId !== gid || pg.identityEnabled === false) return "You need this server's tag equipped.";
   }
   if (r.daily && countSince(s, 1) < r.daily) return `You need ${r.daily} messages today (you have ${countSince(s, 1)}).`;
   if (r.weekly && countSince(s, weekDays()) < r.weekly) return `You need ${r.weekly} messages this week (you have ${countSince(s, weekDays())}).`;
@@ -222,10 +241,15 @@ async function checkEntry(i, g) {
   if (r.total && s.total < r.total) return `You need ${r.total} total messages (you have ${s.total}).`;
   return null;
 }
-function weightFor(i, g) {
+function weightForMember(m, g) {
   let w = 1;
-  for (const [role, n] of Object.entries(g.extra || {})) if (i.member.roles.cache.has(role)) w += n;
+  for (const [role, n] of Object.entries(g.extra || {})) if (m.roles.cache.has(role)) w += n;
   return w;
+}
+const weightFor = (i, g) => weightForMember(i.member, g);
+async function refreshMessage(g) {
+  const { msg } = await fetchMsg(g);
+  if (msg) await msg.edit({ embeds: [embedFor(g, g.ended)], components: [enterRow(g, g.ended)] }).catch(() => {});
 }
 
 /* ───────────── slash command definitions ───────────── */
@@ -290,6 +314,9 @@ client.on('messageCreate', (m) => {
 /* ───────────── interactions ───────────── */
 const eph = { flags: MessageFlags.Ephemeral };
 client.on('interactionCreate', async (i) => {
+  for (const m of ['reply', 'update', 'followUp', 'editReply']) {
+    if (typeof i[m] === 'function') { const f = i[m].bind(i); i[m] = (o) => f(embedify(o)); }
+  }
   try {
     if (i.isButton()) return await onButton(i);
     if (i.isRoleSelectMenu()) return await onRoleSelect(i);
@@ -388,9 +415,11 @@ async function createGiveaway(i) {
   };
   const msg = await ch.send({ embeds: [embedFor(g)], components: [enterRow(g)] });
   g.messageId = msg.id; db.giveaways[msg.id] = g; save();
+  await msg.edit({ embeds: [embedFor(g)], components: [enterRow(g)] }).catch(() => {});
   const extraMsg = o.getString('giveaway-create-message');
-  if (extraMsg) await ch.send(extraMsg).catch(() => {});
-  return i.reply({ content: `Giveaway created in ${ch}.`, ...eph });
+  if (extraMsg) await ch.send({ content: (extraMsg.match(/<@[&!]?\d+>|@everyone|@here/g) || []).join(' ') || undefined,
+    embeds: [new EmbedBuilder().setColor(g.color).setDescription(extraMsg.slice(0, 4000))], allowedMentions: { parse: ['roles', 'users'] } }).catch(() => {});
+  return i.reply({ content: `✅ Giveaway created in ${ch}.`, ...eph });
 }
 
 async function onButton(i) {
@@ -465,7 +494,8 @@ async function onButton(i) {
     else await i.update({ content: '✅ Prize claimed! The host has been notified.', components: [claimRow(g, true)] });
     const { ch, msg } = await fetchMsg(g);
     if (msg) await msg.edit({ embeds: [embedFor(g, true)] }).catch(() => {});
-    if (ch) await ch.send({ content: `✅ <@${i.user.id}> claimed **${g.prize}**! <@${g.host}>, they're ready for their prize.`, allowedMentions: { users: [i.user.id, g.host] } }).catch(() => {});
+    if (ch) await ch.send({ content: `<@${i.user.id}> <@${g.host}>`, embeds: [new EmbedBuilder().setColor(0x57f287).setTitle('✅ Prize claimed')
+      .setDescription(`<@${i.user.id}> claimed **${g.prize}**! <@${g.host}>, they're ready for their prize.`)], allowedMentions: { users: [i.user.id, g.host] } }).catch(() => {});
     return;
   }
 }
@@ -519,15 +549,154 @@ async function onRoleSelect(i) {
   return i.update({ content: `Saved ${key === 'managerRoles' ? 'manager' : 'creator'} roles: ${i.values.map((r) => `<@&${r}>`).join(', ') || 'none'}`, components: [] });
 }
 
-// Serves the website (public/index.html) and gives Render + uptime pings something to hit
-require('http').createServer((_, res) => {
-  const page = [`${__dirname}/index.html`, `${__dirname}/public/index.html`].find((p) => fs.existsSync(p));
+/* ───────────── website: pages, Discord login and giveaway API ───────────── */
+const crypto = require('crypto');
+const sessions = () => (db.sessions ??= {});
+const parseCookies = (req) => Object.fromEntries((req.headers.cookie || '').split(';').map((c) => c.trim().split(/=(.*)/s).slice(0, 2)).filter((p) => p[0]));
+function setCookie(res, name, val, maxAge) {
+  const prev = [].concat(res.getHeader('Set-Cookie') || []);
+  prev.push(`${name}=${val}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${BASE.startsWith('https') ? '; Secure' : ''}`);
+  res.setHeader('Set-Cookie', prev);
+}
+const sendJson = (res, code, obj) => { res.statusCode = code; res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store'); res.end(JSON.stringify(obj)); };
+const redirect = (res, url) => { res.statusCode = 302; res.setHeader('Location', url); res.end(); };
+function getSession(req) {
+  const sid = parseCookies(req).gv_sid, s = sid && sessions()[sid];
+  if (!s) return null;
+  if (s.exp < Date.now()) { delete sessions()[sid]; save(); return null; }
+  return s;
+}
+const avatarUrl = (id, hash) => hash ? `https://cdn.discordapp.com/avatars/${id}/${hash}.png?size=64` : `https://cdn.discordapp.com/embed/avatars/${Number((BigInt(id) >> 22n) % 6n)}.png`;
+const loginReady = () => !!(BASE && process.env.CLIENT_ID && process.env.CLIENT_SECRET);
+
+function reqLines(g, guild) {
+  const r = g.req, role = (id) => '@' + (guild?.roles.cache.get(id)?.name || 'role'), l = [];
+  if (r.roles.length) l.push('Roles: ' + r.roles.map(role).join(', '));
+  if (r.boosts) l.push('Must be boosting this server');
+  if (r.serverTag) l.push("Must have this server's tag equipped");
+  if (r.daily) l.push(`${r.daily}+ messages today`);
+  if (r.weekly) l.push(`${r.weekly}+ messages this week`);
+  if (r.monthly) l.push(`${r.monthly}+ messages this month`);
+  if (r.total) l.push(`${r.total}+ total messages`);
+  if (g.extra && Object.keys(g.extra).length) l.push('Extra entries: ' + Object.entries(g.extra).map(([id, n]) => `${role(id)} ×${n}`).join(', '));
+  if ((g.bypass || []).length) l.push('Bypass roles: ' + g.bypass.map(role).join(', '));
+  return l;
+}
+const nameOf = async (id) => (await client.users.fetch(id).catch(() => null))?.username || id;
+async function giveawayInfo(g, s) {
+  const guild = client.guilds.cache.get(g.guildId);
+  const info = {
+    id: g.messageId, prize: g.prize, ended: g.ended, endsAt: g.endsAt, winners: g.winners, entries: Object.keys(g.entries).length,
+    host: await nameOf(g.host), guild: guild ? { name: guild.name, icon: guild.iconURL({ size: 128 }) } : null,
+    image: g.image, thumbnail: g.thumbnail, color: '#' + Number(g.color).toString(16).padStart(6, '0'), requirements: reqLines(g, guild),
+    winnerNames: g.ended ? await Promise.all(g.winnerIds.map(nameOf)) : [],
+    discordUrl: `https://discord.com/channels/${g.guildId}/${g.channelId}/${g.messageId}`,
+  };
+  if (s) {
+    const me = (info.me = { entered: !!g.entries[s.uid], entries: g.entries[s.uid] || 0, removed: (g.removed || []).includes(s.uid) });
+    if (!g.ended && !me.entered && !me.removed) {
+      const m = guild ? await guild.members.fetch(s.uid).catch(() => null) : null;
+      me.reason = m ? await checkEntryFor(m, s.uid, g.guildId, g) : "You're not a member of this server.";
+      me.canJoin = !me.reason;
+    }
+  }
+  return info;
+}
+async function webJoin(g, s) {
+  if (g.ended || Date.now() >= g.endsAt) return [400, 'This giveaway has ended.'];
+  if ((g.removed || []).includes(s.uid)) return [403, 'You were removed from this giveaway by a moderator.'];
+  if (g.entries[s.uid]) return [400, "You've already joined this giveaway."];
+  const guild = client.guilds.cache.get(g.guildId), m = guild ? await guild.members.fetch(s.uid).catch(() => null) : null;
+  if (!m) return [403, "You're not a member of this server."];
+  const fail = await checkEntryFor(m, s.uid, g.guildId, g);
+  if (fail) return [403, fail];
+  g.entries[s.uid] = weightForMember(m, g); save(); refreshMessage(g);
+  return [200, null];
+}
+async function webLeave(g, s) {
+  if (g.ended) return [400, 'This giveaway has ended.'];
+  if (!g.entries[s.uid]) return [400, 'You are not in this giveaway.'];
+  delete g.entries[s.uid]; save(); refreshMessage(g);
+  return [200, null];
+}
+function servePage(res, name) {
+  const page = [`${__dirname}/${name}`, `${__dirname}/public/${name}`].find((p) => fs.existsSync(p));
   if (!page) return res.end('Givevanced is running');
-  fs.readFile(page, 'utf8', (err, html) => {
-    if (err) return res.end('Givevanced is running');
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.end(html.replaceAll('YOUR_CLIENT_ID', process.env.CLIENT_ID || 'YOUR_CLIENT_ID'));
-  });
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.end(fs.readFileSync(page, 'utf8').replaceAll('YOUR_CLIENT_ID', process.env.CLIENT_ID || 'YOUR_CLIENT_ID'));
+}
+
+async function handle(req, res) {
+  const url = new URL(req.url, 'http://x'), p = url.pathname;
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+
+  if (p === '/login') {
+    if (!loginReady()) return res.end('Login is not configured yet. Set CLIENT_SECRET and BASE_URL on the server.');
+    const state = crypto.randomBytes(16).toString('hex');
+    setCookie(res, 'gv_state', state, 600);
+    const next = url.searchParams.get('next');
+    if (next && /^\/[^/\\]/.test(next)) setCookie(res, 'gv_next', encodeURIComponent(next), 600);
+    return redirect(res, 'https://discord.com/oauth2/authorize?' + new URLSearchParams({
+      client_id: process.env.CLIENT_ID, redirect_uri: `${BASE}/callback`, response_type: 'code', scope: 'identify guilds', state, prompt: 'none' }));
+  }
+  if (p === '/callback') {
+    const ck = parseCookies(req), code = url.searchParams.get('code'), state = url.searchParams.get('state');
+    if (!loginReady() || !code || !state || state !== ck.gv_state) return redirect(res, '/dashboard?error=login');
+    const tok = await fetch('https://discord.com/api/oauth2/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ client_id: process.env.CLIENT_ID, client_secret: process.env.CLIENT_SECRET, grant_type: 'authorization_code', code, redirect_uri: `${BASE}/callback` }) }).then((r) => r.json());
+    if (!tok.access_token) return redirect(res, '/dashboard?error=login');
+    const auth = { headers: { Authorization: `Bearer ${tok.access_token}` } };
+    const [user, guilds] = await Promise.all([fetch('https://discord.com/api/users/@me', auth).then((r) => r.json()), fetch('https://discord.com/api/users/@me/guilds', auth).then((r) => r.json())]);
+    if (!user.id) return redirect(res, '/dashboard?error=login');
+    for (const [k, v] of Object.entries(sessions())) if (v.exp < Date.now()) delete sessions()[k];
+    const sid = crypto.randomBytes(24).toString('hex');
+    sessions()[sid] = { uid: user.id, username: user.global_name || user.username, avatar: avatarUrl(user.id, user.avatar), exp: Date.now() + 7 * 864e5,
+      guilds: (Array.isArray(guilds) ? guilds : []).map((x) => x.id) };
+    save();
+    setCookie(res, 'gv_sid', sid, 7 * 86400);
+    setCookie(res, 'gv_state', '', 0);
+    setCookie(res, 'gv_next', '', 0);
+    const next = ck.gv_next ? decodeURIComponent(ck.gv_next) : '/dashboard';
+    return redirect(res, /^\/[^/\\]/.test(next) ? next : '/dashboard');
+  }
+  if (p === '/logout') {
+    const sid = parseCookies(req).gv_sid;
+    if (sid) { delete sessions()[sid]; save(); }
+    setCookie(res, 'gv_sid', '', 0);
+    return redirect(res, '/');
+  }
+
+  if (p === '/api/me') {
+    const s = getSession(req);
+    return sendJson(res, 200, { user: s ? { id: s.uid, username: s.username, avatar: s.avatar } : null, loginReady: loginReady() });
+  }
+  if (p === '/api/giveaways') {
+    const s = getSession(req);
+    if (!s) return sendJson(res, 401, { error: 'Not logged in' });
+    const mine = Object.values(db.giveaways).filter((g) => s.guilds.includes(g.guildId));
+    const live = mine.filter((g) => !g.ended).sort((a, b) => a.endsAt - b.endsAt);
+    const ended = mine.filter((g) => g.ended).sort((a, b) => b.endsAt - a.endsAt).slice(0, 12);
+    const sum = (g) => ({ id: g.messageId, prize: g.prize, ended: g.ended, endsAt: g.endsAt, winners: g.winners, entries: Object.keys(g.entries).length,
+      entered: !!g.entries[s.uid], guild: client.guilds.cache.get(g.guildId)?.name || 'Server', icon: client.guilds.cache.get(g.guildId)?.iconURL({ size: 64 }) || null });
+    return sendJson(res, 200, { live: live.map(sum), ended: ended.map(sum) });
+  }
+  const m = p.match(/^\/api\/giveaway\/(\d+)(?:\/(join|leave))?$/);
+  if (m) {
+    const g = db.giveaways[m[1]], s = getSession(req);
+    if (!g) return sendJson(res, 404, { error: 'Giveaway not found.' });
+    if (!m[2]) return sendJson(res, 200, await giveawayInfo(g, s));
+    if (req.method !== 'POST') return sendJson(res, 405, { error: 'Use POST.' });
+    if (!s) return sendJson(res, 401, { error: 'Log in with Discord first.' });
+    const [code, error] = await (m[2] === 'join' ? webJoin(g, s) : webLeave(g, s));
+    return sendJson(res, code, error ? { error } : { ok: true });
+  }
+
+  if (p === '/dashboard' || /^\/giveaway\/\d+\/?$/.test(p)) return servePage(res, 'dashboard.html');
+  return servePage(res, 'index.html');
+}
+// Serves the website and gives Render + uptime pings something to hit
+require('http').createServer((req, res) => {
+  handle(req, res).catch((e) => { console.error(e); if (!res.headersSent) { res.statusCode = 500; res.end('Server error'); } });
 }).listen(process.env.PORT || 3000);
 
 initStorage().then(() => client.login(process.env.TOKEN)).catch((e) => { console.error(e); process.exit(1); });
