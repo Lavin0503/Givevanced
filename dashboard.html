@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Dashboard — Givevanced</title>
+<link rel="icon" href="https://lavin0503.github.io/Givevanced/Givevanced%20Logo.jpg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0b0b12;--surface:#14141f;--line:#26263a;--text:#f4f4fa;--muted:#9a9ab5;--accent:#ffb340;--accent2:#ff5d8f;--ink:#1a1204;--ok:#43e0a1;--bad:#ff6b7a;--blurple:#5865f2;--glow:rgba(255,93,143,.16);box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:light){:root:not([data-theme="dark"]){--bg:#fbf9f6;--surface:#fff;--line:#e8e3da;--text:#17161d;--muted:#6a6776;--ok:#12a46d;--bad:#d6334a;--glow:rgba(255,93,143,.12)}}
+:root[data-theme="light"]{--bg:#fbf9f6;--surface:#fff;--line:#e8e3da;--text:#17161d;--muted:#6a6776;--ok:#12a46d;--bad:#d6334a;--glow:rgba(255,93,143,.12)}
+*,*::before,*::after{box-sizing:inherit}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 'Sora',system-ui,-apple-system,'Segoe UI',sans-serif;-webkit-font-smoothing:antialiased;min-height:100vh;overflow-x:hidden}
+body::before{content:"";position:fixed;inset:0;background:radial-gradient(600px 300px at 15% 0,var(--glow),transparent),radial-gradient(500px 300px at 90% 10%,rgba(88,101,242,.14),transparent);pointer-events:none}
+a{color:inherit;text-decoration:none}
+.wrap{max-width:980px;margin:0 auto;padding:0 20px;position:relative}
+nav{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:color-mix(in srgb,var(--bg) 82%,transparent);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+nav .wrap{display:flex;align-items:center;justify-content:space-between;height:64px;gap:12px}
+.logo{display:flex;align-items:center;gap:10px;font-weight:800;font-size:18px}
+.logo img{width:32px;height:32px;border-radius:10px;object-fit:cover}
+.nr{display:flex;align-items:center;gap:10px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:11px 20px;border-radius:12px;font:700 14px 'Sora',sans-serif;border:1px solid var(--line);background:var(--surface);color:var(--text);cursor:pointer;transition:transform .15s,opacity .15s}
+.btn:hover{transform:translateY(-2px)}.btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
+.btn.main{background:linear-gradient(135deg,var(--accent),var(--accent2));color:var(--ink);border:0}
+.btn.dc{background:var(--blurple);color:#fff;border:0}.btn.bad{background:transparent;color:var(--bad);border-color:var(--bad)}
+.btn.sm{padding:8px 14px;font-size:13px}
+.user{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600}.user img{width:30px;height:30px;border-radius:50%}
+main{padding:44px 0 80px}
+h1{font-size:clamp(28px,4.5vw,40px);line-height:1.1;margin:0 0 8px;letter-spacing:-.02em}
+h2{font-size:18px;margin:34px 0 14px}
+.sub{color:var(--muted);margin:0 0 26px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:22px}
+.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+.gcard{display:flex;flex-direction:column;gap:12px;transition:transform .2s,border-color .2s}.gcard:hover{transform:translateY(-3px);border-color:var(--accent)}
+.row{display:flex;align-items:center;gap:10px}.sp{justify-content:space-between}
+.ico{width:34px;height:34px;border-radius:50%;object-fit:cover;background:var(--line);flex:none}
+.muted{color:var(--muted);font-size:14px}.t{font-weight:700;font-size:18px;word-break:break-word}
+.badge{font-size:12px;font-weight:700;padding:3px 10px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
+.badge.live{color:var(--ok);border-color:var(--ok)}.badge.in{color:var(--accent);border-color:var(--accent)}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:20px 0}
+.st{background:color-mix(in srgb,var(--bg) 55%,var(--surface));border:1px solid var(--line);border-radius:14px;padding:12px 14px}
+.st b{display:block;font-size:18px}.st span{font-size:12px;color:var(--muted)}
+ul.req{margin:0;padding-left:20px;color:var(--muted);font-size:15px}
+.hero-img{width:100%;max-height:240px;object-fit:cover;border-radius:14px;margin-bottom:18px}
+.msg{padding:12px 16px;border-radius:12px;font-size:14px;margin:16px 0;border:1px solid var(--line)}
+.msg.ok{border-color:var(--ok);color:var(--ok)}.msg.bad{border-color:var(--bad);color:var(--bad)}
+.center{text-align:center;padding:50px 22px}.center .btn{margin-top:18px}
+.accent{background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
+.skel{height:90px;border-radius:16px;background:linear-gradient(90deg,var(--surface),var(--line),var(--surface));background-size:200% 100%;animation:sk 1.2s infinite}@keyframes sk{to{background-position:-200% 0}}
+@media(max-width:700px){.grid{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,1fr)}.user span{display:none}}
+</style>
+</head>
+<body>
+<nav><div class="wrap">
+  <a class="logo" href="/"><img src="https://lavin0503.github.io/Givevanced/Givevanced%20Logo.jpg" alt="" onerror="this.remove()">Givevanced</a>
+  <div class="nr" id="nr"></div>
+</div></nav>
+<main><div class="wrap" id="app"><div class="skel"></div></div></main>
+
+<script>
+const app=document.getElementById('app'),nr=document.getElementById('nr');
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function api(p,o){const r=await fetch(p,{credentials:'same-origin',...o});let d={};try{d=await r.json()}catch{}return{ok:r.ok,d}}
+const loginUrl=()=>'/login?next='+encodeURIComponent(location.pathname);
+const left=ms=>{if(ms<=0)return 'Ended';const s=Math.floor(ms/1000),d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return d?`${d}d ${h}h ${m}m`:h?`${h}h ${m}m ${s%60}s`:`${m}m ${s%60}s`};
+let timer;
+function tick(){document.querySelectorAll('[data-end]').forEach(e=>e.textContent=left(+e.dataset.end-Date.now()))}
+function nav(me){
+  nr.innerHTML=me.user?`<div class="user"><img src="${esc(me.user.avatar)}" alt=""><span>${esc(me.user.username)}</span></div><a class="btn sm" href="/logout">Log out</a>`
+   :me.loginReady?`<a class="btn dc sm" href="${loginUrl()}">Login with Discord</a>`:'';
+}
+const icon=(u)=>u?`<img class="ico" src="${esc(u)}" alt="">`:'<span class="ico"></span>';
+
+async function dashboard(me){
+  const err=new URLSearchParams(location.search).get('error');
+  let h=`<h1>Your <span class="accent">dashboard</span></h1><p class="sub">Giveaways running in the servers you share with Givevanced.</p>`;
+  if(err)h+=`<div class="msg bad">Discord login failed. Please try again.</div>`;
+  if(!me.user){
+    app.innerHTML=h+`<div class="card center"><div class="t">Log in to get started</div><p class="muted">Connect your Discord account to see giveaways in your servers and join them from here.</p>${me.loginReady?`<a class="btn dc" href="${loginUrl()}">Login with Discord</a>`:`<p class="msg bad">Login isn't set up yet. The owner needs to add CLIENT_SECRET and BASE_URL.</p>`}</div>`;return;
+  }
+  const r=await api('/api/giveaways');
+  const item=g=>`<a class="card gcard" href="/giveaway/${g.id}"><div class="row sp"><div class="row">${icon(g.icon)}<span class="muted">${esc(g.guild)}</span></div><span class="badge ${g.ended?'':g.entered?'in':'live'}">${g.ended?'Ended':g.entered?'Joined':'Live'}</span></div><div class="t">${esc(g.prize)}</div><div class="row sp muted"><span>${g.entries} entries · ${g.winners} winner${g.winners>1?'s':''}</span><span ${g.ended?'':`data-end="${g.endsAt}"`}>${g.ended?'':''}</span></div></a>`;
+  const live=r.d.live||[],ended=r.d.ended||[];
+  h+=`<h2>Live giveaways</h2>`+(live.length?`<div class="grid">${live.map(item).join('')}</div>`:`<div class="card muted">No live giveaways in your servers right now.</div>`);
+  if(ended.length)h+=`<h2>Recently ended</h2><div class="grid">${ended.map(item).join('')}</div>`;
+  app.innerHTML=h;
+}
+
+async function detail(id,me){
+  const r=await api('/api/giveaway/'+id);
+  if(!r.ok){app.innerHTML=`<div class="card center"><div class="t">Giveaway not found</div><p class="muted">It may have been deleted.</p><a class="btn main" href="/dashboard">Back to dashboard</a></div>`;return}
+  const g=r.d,m=g.me;
+  let act='';
+  if(g.ended)act='';
+  else if(!me.user)act=me.loginReady?`<a class="btn dc" href="${loginUrl()}">Login with Discord to join</a>`:`<p class="msg bad">Login isn't set up yet.</p>`;
+  else if(m.entered)act=`<div class="msg ok">✅ You're in${m.entries>1?` with ${m.entries} entries`:''}!</div><button class="btn bad" id="leave">Leave giveaway</button>`;
+  else if(m.removed)act=`<div class="msg bad">You were removed from this giveaway by a moderator.</div>`;
+  else if(m.canJoin)act=`<button class="btn main" id="join">🎉 Join giveaway</button>`;
+  else act=`<div class="msg bad">${esc(m.reason)}</div><button class="btn" disabled>Can't join</button>`;
+  const win=g.ended?`<h2>Winners</h2><div class="card">${g.winnerNames.length?g.winnerNames.map(n=>`<div class="t" style="font-size:16px">🏆 ${esc(n)}</div>`).join(''):'<span class="muted">No valid entries.</span>'}</div>`:'';
+  app.innerHTML=`<a class="muted" href="/dashboard">← Back to dashboard</a>
+  <div class="card" style="margin-top:14px;border-top:3px solid ${esc(g.color)}">
+    <div class="row sp" style="margin-bottom:14px"><div class="row">${icon(g.guild&&g.guild.icon)}<span class="muted">${esc(g.guild?g.guild.name:'Server')}</span></div><span class="badge ${g.ended?'':'live'}">${g.ended?'Ended':'Live'}</span></div>
+    ${g.image?`<img class="hero-img" src="${esc(g.image)}" alt="">`:''}
+    <h1>${esc(g.prize)}</h1>
+    <div class="stats">
+      <div class="st"><b>${g.winners}</b><span>Winners</span></div>
+      <div class="st"><b>${g.entries}</b><span>Entries</span></div>
+      <div class="st"><b ${g.ended?'':`data-end="${g.endsAt}"`}>${g.ended?'Ended':''}</b><span>${g.ended?'Status':'Time left'}</span></div>
+      <div class="st"><b style="font-size:15px;word-break:break-word">${esc(g.host)}</b><span>Hosted by</span></div>
+    </div>
+    ${g.requirements.length?`<div class="t" style="font-size:16px;margin-bottom:8px">Requirements</div><ul class="req">${g.requirements.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`:'<p class="muted">No requirements. Anyone can join.</p>'}
+    <div id="act" style="margin-top:22px">${act}</div><div id="note"></div>
+    <p style="margin:20px 0 0"><a class="muted" href="${esc(g.discordUrl)}" target="_blank" rel="noopener">Open in Discord ↗</a></p>
+  </div>${win}`;
+  const go=async(path)=>{document.querySelectorAll('#act .btn').forEach(b=>b.disabled=true);const x=await api('/api/giveaway/'+id+'/'+path,{method:'POST'});
+    if(x.ok)return detail(id,me);document.getElementById('note').innerHTML=`<div class="msg bad">${esc(x.d.error||'Something went wrong.')}</div>`;document.querySelectorAll('#act .btn').forEach(b=>b.disabled=false)};
+  const j=document.getElementById('join'),l=document.getElementById('leave');
+  if(j)j.onclick=()=>go('join');if(l)l.onclick=()=>go('leave');
+}
+
+(async()=>{
+  const me=(await api('/api/me')).d;nav(me);
+  const m=location.pathname.match(/^\/giveaway\/(\d+)/);
+  m?await detail(m[1],me):await dashboard(me);
+  tick();clearInterval(timer);timer=setInterval(tick,1000);
+})();
+</script>
+</body>
+</html>
