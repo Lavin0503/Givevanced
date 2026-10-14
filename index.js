@@ -8,6 +8,7 @@ const {
 
 const TICK_ID = '1559999432597180516', CROSS_ID = '1559999451513487529';
 const TICK = `<:tick:${TICK_ID}>`, CROSS = `<:cross:${CROSS_ID}>`;
+const WEB_ID = '1560011706170736690', WEB = `<:website:${WEB_ID}>`;
 const withEmoji = (t) => String(t).replace(/✅/g, TICK).replace(/❌/g, CROSS);
 const BASE = (process.env.RENDER_EXTERNAL_URL || process.env.BASE_URL || '').replace(/\/$/, '');
 
@@ -116,7 +117,7 @@ function embedFor(g, ended = false) {
       `**Hosted by:** <@${g.host}>`,
       `**Winners:** ${g.winners}`,
       `**Entries:** ${Object.keys(g.entries).length}`,
-      BASE && g.messageId ? `🌐 [View on the website](${BASE}/giveaway/${g.messageId})` : '',
+      BASE && g.messageId ? `${WEB} [View on the website](${BASE}/giveaway/${g.messageId})` : '',
       reqText(g),
       ended ? `\n**Winner(s):** ${g.winnerIds.length ? g.winnerIds.map((w) => `<@${w}>${(g.claimed || []).includes(w) ? ` ${TICK}` : ''}`).join(', ') : 'No valid entries'}` : '',
     ].filter(Boolean).join('\n'))
@@ -339,7 +340,7 @@ function helpMessage() {
       { name: '✨ Good to know', value: '• Winners get a **Claim** button in their DMs when a claim time is set\n• Requirements: roles, boosting, server tag and message counts\n• Commands that need a giveaway let you pick it from a list\n• Create and manage giveaways from the website dashboard' })
     .setFooter({ text: 'Made by @lav1nrules' });
   const row = new ActionRowBuilder();
-  if (BASE) row.addComponents(new ButtonBuilder().setLabel('Dashboard').setStyle(ButtonStyle.Link).setURL(`${BASE}/dashboard`));
+  if (BASE) row.addComponents(new ButtonBuilder().setLabel('Dashboard').setEmoji({ id: WEB_ID }).setStyle(ButtonStyle.Link).setURL(`${BASE}/dashboard`));
   row.addComponents(new ButtonBuilder().setLabel('Add to your server').setStyle(ButtonStyle.Link).setURL(`https://discord.com/oauth2/authorize?client_id=${process.env.CLIENT_ID}&permissions=268520448&scope=bot%20applications.commands`));
   return { embeds: [e], components: [row] };
 }
