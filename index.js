@@ -6,7 +6,7 @@ const {
   TextInputStyle, REST, Routes, PermissionFlagsBits, MessageFlags, ChannelType, ActivityType,
 } = require('discord.js');
 
-const TICK_ID = '1559996000418930729', CROSS_ID = '1559996312366354572';
+const TICK_ID = '1559999432597180516', CROSS_ID = '1559999451513487529';
 const TICK = `<:tick:${TICK_ID}>`, CROSS = `<:cross:${CROSS_ID}>`;
 const withEmoji = (t) => String(t).replace(/✅/g, TICK).replace(/❌/g, CROSS);
 const BASE = (process.env.RENDER_EXTERNAL_URL || process.env.BASE_URL || '').replace(/\/$/, '');
