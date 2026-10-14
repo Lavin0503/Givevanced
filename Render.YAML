@@ -2,17 +2,17 @@ services:
   - type: web
     name: givevanced
     runtime: node
-    plan: starter            # $7/mo - doesn't sleep, and allows a disk
+    plan: free
     buildCommand: npm install
     startCommand: npm start
-    disk:
-      name: givevanced-data
-      mountPath: /data
-      sizeGB: 1
     envVars:
-      - key: DATA_DIR
-        value: /data
       - key: TOKEN
         sync: false
       - key: CLIENT_ID
+        sync: false
+      - key: CLIENT_SECRET
+        sync: false
+      - key: BASE_URL
+        sync: false
+      - key: MONGODB_URI
         sync: false
