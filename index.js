@@ -128,7 +128,6 @@ const enterRow = (g, disabled = false) => {
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('gw_enter').setLabel(String(Object.keys(g.entries).length)).setEmoji('🎉').setStyle(ButtonStyle.Primary).setDisabled(disabled),
     new ButtonBuilder().setCustomId(`gw_parts:${g.messageId}`).setLabel('Participants').setEmoji('👥').setStyle(ButtonStyle.Secondary));
-  if (BASE && g.messageId) row.addComponents(new ButtonBuilder().setLabel('Website').setEmoji('🌐').setStyle(ButtonStyle.Link).setURL(`${BASE}/giveaway/${g.messageId}`));
   return row;
 };
 
@@ -725,7 +724,15 @@ function servePage(res, name) {
 async function handle(req, res) {
   const url = new URL(req.url, 'http://x'), p = url.pathname;
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  if (req.method !== 'GET' && req.method !== 'HEAD' && req.headers.origin && BASE && req.headers.origin !== BASE) return sendJson(res, 403, { error: 'Bad origin.' });
+  if (req.method !== 'GET' && req.method !== 'HEAD' && req.headers.origin) {
+    // Only allow requests that come from this site itself (compare hosts, so BASE_URL typos can't lock people out)
+    let ok = false;
+    try {
+      const oh = new URL(req.headers.origin).host;
+      ok = oh === req.headers.host || oh === req.headers['x-forwarded-host'] || (!!BASE && oh === new URL(BASE).host);
+    } catch { /* invalid origin */ }
+    if (!ok) return sendJson(res, 403, { error: 'Bad origin.' });
+  }
 
   if (p === '/login') {
     if (!loginReady()) return res.end('Login is not configured yet. Set CLIENT_SECRET and BASE_URL on the server.');
