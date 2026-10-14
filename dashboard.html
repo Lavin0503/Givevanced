@@ -50,7 +50,19 @@ ul.req{margin:0;padding-left:20px;color:var(--muted);font-size:15px}
 .center{text-align:center;padding:50px 22px}.center .btn{margin-top:18px}
 .accent{background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
 .skel{height:90px;border-radius:16px;background:linear-gradient(90deg,var(--surface),var(--line),var(--surface));background-size:200% 100%;animation:sk 1.2s infinite}@keyframes sk{to{background-position:-200% 0}}
-@media(max-width:700px){.grid{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,1fr)}.user span{display:none}}
+input,select,textarea{width:100%;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font:inherit;font-size:14px}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:0}input[type=color]{padding:2px;height:40px}input[type=checkbox]{width:auto}
+label{display:block;font-size:13px;font-weight:600;margin:0 0 6px;color:var(--muted)}.f{margin-bottom:14px}.f2{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}.f4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.chk{display:flex;align-items:center;gap:8px;font-size:14px;margin:0;color:var(--text)}select[multiple]{min-height:96px}
+.tabs{display:flex;gap:8px;margin:22px 0;flex-wrap:wrap}.tab{padding:9px 18px;border-radius:99px;border:1px solid var(--line);background:var(--surface);color:var(--muted);font:600 14px 'Sora',sans-serif;cursor:pointer}
+.tab.on{background:linear-gradient(135deg,var(--accent),var(--accent2));color:var(--ink);border-color:transparent}
+.acts{display:flex;gap:8px;flex-wrap:wrap}.hint{font-size:12px;color:var(--muted);margin-top:4px}
+dialog{background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:18px;padding:22px;max-width:520px;width:calc(100% - 32px)}dialog::backdrop{background:rgba(0,0,0,.6)}
+.prow{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:14px}.prow:last-child{border:0}
+.xrow{display:grid;grid-template-columns:1fr 90px 40px;gap:8px;margin-bottom:8px}
+.bd{font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;background:var(--glow);color:var(--accent)}
+h3.sec{font-size:15px;margin:24px 0 12px;color:var(--accent)}
+@media(max-width:700px){.f2,.f4{grid-template-columns:1fr}.grid{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,1fr)}.user span{display:none}}
 </style>
 </head>
 <body>
@@ -64,36 +76,36 @@ ul.req{margin:0;padding-left:20px;color:var(--muted);font-size:15px}
 const app=document.getElementById('app'),nr=document.getElementById('nr');
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function api(p,o){const r=await fetch(p,{credentials:'same-origin',...o});let d={};try{d=await r.json()}catch{}return{ok:r.ok,d}}
+const post=(p,b)=>api(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});
 const loginUrl=()=>'/login?next='+encodeURIComponent(location.pathname);
 const left=ms=>{if(ms<=0)return 'Ended';const s=Math.floor(ms/1000),d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return d?`${d}d ${h}h ${m}m`:h?`${h}h ${m}m ${s%60}s`:`${m}m ${s%60}s`};
-let timer;
-function tick(){document.querySelectorAll('[data-end]').forEach(e=>e.textContent=left(+e.dataset.end-Date.now()))}
-function nav(me){
-  nr.innerHTML=me.user?`<div class="user"><img src="${esc(me.user.avatar)}" alt=""><span>${esc(me.user.username)}</span></div><a class="btn sm" href="/logout">Log out</a>`
-   :me.loginReady?`<a class="btn dc sm" href="${loginUrl()}">Login with Discord</a>`:'';
-}
-const icon=(u)=>u?`<img class="ico" src="${esc(u)}" alt="">`:'<span class="ico"></span>';
+let timer;const tick=()=>document.querySelectorAll('[data-end]').forEach(e=>e.textContent=left(+e.dataset.end-Date.now()));
+const icon=u=>u?`<img class="ico" src="${esc(u)}" alt="">`:'<span class="ico"></span>';
+function flash(msg,ok){const n=document.getElementById('flash');if(n){n.innerHTML=msg?`<div class="msg ${ok?'ok':'bad'}">${msg}</div>`:'';if(msg)n.scrollIntoView({block:'nearest'})}}
+function nav(me){nr.innerHTML=me.user?`<a class="btn sm" href="/dashboard">Dashboard</a><div class="user"><img src="${esc(me.user.avatar)}" alt=""><span>${esc(me.user.username)}</span></div><a class="btn sm" href="/logout">Log out</a>`:me.loginReady?`<a class="btn dc sm" href="${loginUrl()}">Login with Discord</a>`:''}
+const needLogin=(me,t)=>`<div class="card center"><div class="t">${t||'Log in to continue'}</div><p class="muted">Connect your Discord account to continue.</p>${me.loginReady?`<a class="btn dc" href="${loginUrl()}">Login with Discord</a>`:`<p class="msg bad">Login isn't set up yet. The owner needs to add CLIENT_SECRET and BASE_URL.</p>`}</div>`;
 
-async function dashboard(me){
+/* ---------- home ---------- */
+async function home(me){
   const err=new URLSearchParams(location.search).get('error');
-  let h=`<h1>Your <span class="accent">dashboard</span></h1><p class="sub">Giveaways running in the servers you share with Givevanced.</p>`;
+  let h=`<h1>Your <span class="accent">dashboard</span></h1><p class="sub">Manage giveaways and join them in the servers you share with Givevanced.</p>`;
   if(err)h+=`<div class="msg bad">Discord login failed. Please try again.</div>`;
-  if(!me.user){
-    app.innerHTML=h+`<div class="card center"><div class="t">Log in to get started</div><p class="muted">Connect your Discord account to see giveaways in your servers and join them from here.</p>${me.loginReady?`<a class="btn dc" href="${loginUrl()}">Login with Discord</a>`:`<p class="msg bad">Login isn't set up yet. The owner needs to add CLIENT_SECRET and BASE_URL.</p>`}</div>`;return;
-  }
-  const r=await api('/api/giveaways');
-  const item=g=>`<a class="card gcard" href="/giveaway/${g.id}"><div class="row sp"><div class="row">${icon(g.icon)}<span class="muted">${esc(g.guild)}</span></div><span class="badge ${g.ended?'':g.entered?'in':'live'}">${g.ended?'Ended':g.entered?'Joined':'Live'}</span></div><div class="t">${esc(g.prize)}</div><div class="row sp muted"><span>${g.entries} entries · ${g.winners} winner${g.winners>1?'s':''}</span><span ${g.ended?'':`data-end="${g.endsAt}"`}>${g.ended?'':''}</span></div></a>`;
+  if(!me.user){app.innerHTML=h+needLogin(me,'Log in to get started');return}
+  const [sv,r]=await Promise.all([api('/api/servers'),api('/api/giveaways')]);
+  const servers=sv.d.servers||[];
+  h+=`<h2>Your servers</h2>`+(servers.length?`<div class="grid">${servers.map(s=>`<a class="card gcard" href="/dashboard/server/${s.id}"><div class="row sp"><div class="row">${icon(s.icon)}<span class="t" style="font-size:16px">${esc(s.name)}</span></div>${s.manage?'<span class="bd">Manage</span>':s.create?'<span class="bd">Create</span>':''}</div><div class="muted">${s.live} live giveaway${s.live===1?'':'s'}</div></a>`).join('')}</div>`:`<div class="card muted">Givevanced isn't in any of your servers yet.</div>`);
+  const item=g=>`<a class="card gcard" href="/giveaway/${g.id}"><div class="row sp"><div class="row">${icon(g.icon)}<span class="muted">${esc(g.guild)}</span></div><span class="badge ${g.ended?'':g.entered?'in':'live'}">${g.ended?'Ended':g.entered?'Joined':'Live'}</span></div><div class="t">${esc(g.prize)}</div><div class="row sp muted"><span>${g.entries} entries · ${g.winners} winner${g.winners>1?'s':''}</span><span ${g.ended?'':`data-end="${g.endsAt}"`}></span></div></a>`;
   const live=r.d.live||[],ended=r.d.ended||[];
   h+=`<h2>Live giveaways</h2>`+(live.length?`<div class="grid">${live.map(item).join('')}</div>`:`<div class="card muted">No live giveaways in your servers right now.</div>`);
   if(ended.length)h+=`<h2>Recently ended</h2><div class="grid">${ended.map(item).join('')}</div>`;
   app.innerHTML=h;
 }
 
+/* ---------- giveaway page ---------- */
 async function detail(id,me){
   const r=await api('/api/giveaway/'+id);
   if(!r.ok){app.innerHTML=`<div class="card center"><div class="t">Giveaway not found</div><p class="muted">It may have been deleted.</p><a class="btn main" href="/dashboard">Back to dashboard</a></div>`;return}
-  const g=r.d,m=g.me;
-  let act='';
+  const g=r.d,m=g.me;let act='';
   if(g.ended)act='';
   else if(!me.user)act=me.loginReady?`<a class="btn dc" href="${loginUrl()}">Login with Discord to join</a>`:`<p class="msg bad">Login isn't set up yet.</p>`;
   else if(m.entered)act=`<div class="msg ok">✅ You're in${m.entries>1?` with ${m.entries} entries`:''}!</div><button class="btn bad" id="leave">Leave giveaway</button>`;
@@ -107,8 +119,7 @@ async function detail(id,me){
     ${g.image?`<img class="hero-img" src="${esc(g.image)}" alt="">`:''}
     <h1>${esc(g.prize)}</h1>
     <div class="stats">
-      <div class="st"><b>${g.winners}</b><span>Winners</span></div>
-      <div class="st"><b>${g.entries}</b><span>Entries</span></div>
+      <div class="st"><b>${g.winners}</b><span>Winners</span></div><div class="st"><b>${g.entries}</b><span>Entries</span></div>
       <div class="st"><b ${g.ended?'':`data-end="${g.endsAt}"`}>${g.ended?'Ended':''}</b><span>${g.ended?'Status':'Time left'}</span></div>
       <div class="st"><b style="font-size:15px;word-break:break-word">${esc(g.host)}</b><span>Hosted by</span></div>
     </div>
@@ -116,16 +127,125 @@ async function detail(id,me){
     <div id="act" style="margin-top:22px">${act}</div><div id="note"></div>
     <p style="margin:20px 0 0"><a class="muted" href="${esc(g.discordUrl)}" target="_blank" rel="noopener">Open in Discord ↗</a></p>
   </div>${win}`;
-  const go=async(path)=>{document.querySelectorAll('#act .btn').forEach(b=>b.disabled=true);const x=await api('/api/giveaway/'+id+'/'+path,{method:'POST'});
+  const go=async p=>{document.querySelectorAll('#act .btn').forEach(b=>b.disabled=true);const x=await post('/api/giveaway/'+id+'/'+p);
     if(x.ok)return detail(id,me);document.getElementById('note').innerHTML=`<div class="msg bad">${esc(x.d.error||'Something went wrong.')}</div>`;document.querySelectorAll('#act .btn').forEach(b=>b.disabled=false)};
-  const j=document.getElementById('join'),l=document.getElementById('leave');
-  if(j)j.onclick=()=>go('join');if(l)l.onclick=()=>go('leave');
+  const j=document.getElementById('join'),l=document.getElementById('leave');if(j)j.onclick=()=>go('join');if(l)l.onclick=()=>go('leave');
+}
+
+/* ---------- server manager ---------- */
+let curTab='Giveaways',SV=null,SID=null,ME=null;
+async function server(gid,me){
+  SID=gid;ME=me;
+  if(!me.user){app.innerHTML=needLogin(me);return}
+  const r=await api('/api/server/'+gid);
+  if(!r.ok){app.innerHTML=`<div class="card center"><div class="t">${esc(r.d.error||'Server not found')}</div><a class="btn main" href="/dashboard">Back to dashboard</a></div>`;return}
+  SV=r.d;
+  const tabs=['Giveaways',SV.flags.create&&'Create',SV.flags.manage&&'Settings','Stats'].filter(Boolean);
+  if(!tabs.includes(curTab))curTab='Giveaways';
+  app.innerHTML=`<a class="muted" href="/dashboard">← Back to dashboard</a>
+  <div class="row" style="margin:14px 0 0;gap:14px">${icon(SV.icon)}<h1 style="margin:0">${esc(SV.name)}</h1>${SV.flags.manage?'<span class="bd">Manage</span>':SV.flags.create?'<span class="bd">Create</span>':''}</div>
+  <div class="tabs">${tabs.map(t=>`<button class="tab ${t===curTab?'on':''}" data-t="${t}">${t}</button>`).join('')}</div>
+  <div id="flash"></div><div id="tab"></div><dialog id="dlg"></dialog>`;
+  document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{curTab=b.dataset.t;document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x===b));showTab()});
+  showTab();tick();
+}
+function showTab(){const t=document.getElementById('tab');({Giveaways:tabGiveaways,Create:tabCreate,Settings:tabSettings,Stats:tabStats})[curTab](t);tick()}
+async function act(path,body,okMsg,confirmMsg){
+  if(confirmMsg&&!confirm(confirmMsg))return false;
+  const x=await post(path,body);
+  if(x.ok){await server(SID,ME);flash(okMsg,true);return true}
+  flash(esc(x.d.error||'Something went wrong.'),false);return false;
+}
+function tabGiveaways(t){
+  const m=SV.flags.manage,c=SV.flags.create;
+  const card=g=>`<div class="card gcard"><div class="row sp"><span class="muted">#${esc(g.channel)}</span><span class="badge ${g.ended?'':'live'}">${g.ended?'Ended':'Live'}</span></div>
+   <div class="t">${esc(g.prize)}</div><div class="row sp muted"><span>${g.entries} entries · ${g.winners} winner${g.winners>1?'s':''}</span><span ${g.ended?'':`data-end="${g.endsAt}"`}></span></div>
+   <div class="acts"><a class="btn sm" href="/giveaway/${g.id}">View</a>${m?`<button class="btn sm" data-a="parts" data-id="${g.id}">Participants</button><button class="btn sm" data-a="edit" data-id="${g.id}" data-p="${esc(g.prize)}" data-w="${g.winners}" data-e="${g.ended?1:0}">Edit</button>`:''}${c&&m?`<button class="btn sm" data-a="clone" data-id="${g.id}">Clone</button>`:''}${m&&!g.ended?`<button class="btn sm bad" data-a="end" data-id="${g.id}">End now</button>`:''}${m&&g.ended?`<button class="btn sm" data-a="reroll" data-id="${g.id}">Reroll</button>`:''}${m?`<button class="btn sm bad" data-a="del" data-id="${g.id}">Delete</button>`:''}</div></div>`;
+  t.innerHTML=`<h2 style="margin-top:0">Live giveaways</h2>`+(SV.live.length?`<div class="grid">${SV.live.map(card).join('')}</div>`:`<div class="card muted">No live giveaways. ${c?'Use the Create tab to start one.':''}</div>`)+(SV.ended.length?`<h2>Recently ended</h2><div class="grid">${SV.ended.map(card).join('')}</div>`:'');
+  t.querySelectorAll('[data-a]').forEach(b=>b.onclick=()=>{const id=b.dataset.id,a=b.dataset.a;
+    if(a==='end')act('/api/giveaway/'+id+'/end',{},'✅ Giveaway ended.','End this giveaway now and pick winners?');
+    if(a==='reroll')act('/api/giveaway/'+id+'/reroll',{},'✅ Rerolled. New winners were announced.','Reroll the winners?');
+    if(a==='del')act('/api/giveaway/'+id+'/delete',{},'✅ Giveaway deleted.','Delete this giveaway and its message? This cannot be undone.');
+    if(a==='parts')participants(id);if(a==='edit')editDlg(b.dataset);if(a==='clone')clone(id);});
+}
+const dlg=()=>document.getElementById('dlg');
+async function participants(id){
+  const d=dlg();d.innerHTML='<div class="skel"></div>';d.showModal();
+  const r=await api('/api/giveaway/'+id+'/participants');
+  if(!r.ok){d.innerHTML=`<div class="msg bad">${esc(r.d.error)}</div><button class="btn" onclick="dlg().close()">Close</button>`;return}
+  d.innerHTML=`<div class="t" style="margin-bottom:6px">Participants (${r.d.total})</div><div style="max-height:50vh;overflow:auto">${r.d.list.map(u=>`<div class="prow"><span>${esc(u.username)} <span class="muted">· ${u.entries} ${u.entries===1?'entry':'entries'}</span></span>${r.d.ended?'':`<button class="btn sm bad" data-u="${u.id}">Remove</button>`}</div>`).join('')||'<p class="muted">Nobody has joined yet.</p>'}</div>${r.d.total>200?'<p class="hint">Showing the first 200.</p>':''}<div style="margin-top:14px"><button class="btn" onclick="dlg().close()">Close</button></div>`;
+  d.querySelectorAll('[data-u]').forEach(b=>b.onclick=async()=>{if(!confirm('Remove this participant? They will not be able to rejoin.'))return;const x=await post('/api/giveaway/'+id+'/remove',{userId:b.dataset.u});if(x.ok){await server(SID,ME);participants(id)}else alert(x.d.error)});
+}
+function editDlg(ds){
+  const d=dlg();
+  d.innerHTML=`<div class="t" style="margin-bottom:14px">Edit giveaway</div><div class="f"><label>Prize</label><input id="e_p" value="${esc(ds.p)}" maxlength="256"></div><div class="f2"><div class="f"><label>Winners</label><input id="e_w" type="number" min="1" max="50" value="${esc(ds.w)}"></div>${ds.e==='1'?'':'<div class="f"><label>New duration (from now)</label><input id="e_d" placeholder="e.g. 2 hours"></div>'}</div><div class="acts"><button class="btn main" id="e_s">Save</button><button class="btn" onclick="dlg().close()">Cancel</button></div><div id="e_m"></div>`;
+  d.showModal();
+  document.getElementById('e_s').onclick=async()=>{const x=await post('/api/giveaway/'+ds.id+'/edit',{prize:val('e_p'),winners:val('e_w'),duration:document.getElementById('e_d')?val('e_d'):''});
+    if(x.ok){d.close();await server(SID,ME);flash('✅ Giveaway updated.',true)}else document.getElementById('e_m').innerHTML=`<div class="msg bad">${esc(x.d.error)}</div>`};
+}
+const val=id=>document.getElementById(id).value,sel=id=>[...document.getElementById(id).selectedOptions].map(o=>o.value);
+const roleOpts=()=>SV.roles.map(r=>`<option value="${r.id}">${esc(r.name)}</option>`).join('');
+function addXRow(role,n){const w=document.getElementById('xrows'),d=document.createElement('div');d.className='xrow';
+  d.innerHTML=`<select class="xr">${roleOpts()}</select><input class="xn" type="number" min="1" max="100" value="${n||2}"><button type="button" class="btn sm bad">✕</button>`;
+  if(role)d.querySelector('.xr').value=role;d.querySelector('button').onclick=()=>d.remove();w.appendChild(d)}
+function tabCreate(t){
+  t.innerHTML=`<div class="card"><div class="f2"><div class="f"><label>Prize *</label><input id="f_prize" maxlength="256" placeholder="e.g. Discord Nitro"></div><div class="f"><label>Duration *</label><input id="f_duration" placeholder="e.g. 1 hour, 2 days"></div></div>
+  <div class="f2"><div class="f"><label>Winners *</label><input id="f_winners" type="number" min="1" max="50" value="1"></div><div class="f"><label>Channel *</label><select id="f_channel">${SV.channels.map(c=>`<option value="${c.id}">#${esc(c.name)}</option>`).join('')}</select></div></div>
+  <h3 class="sec">Requirements</h3>
+  <div class="f2"><div class="f"><label>Required roles (hold Ctrl/Cmd to pick several)</label><select id="f_req" multiple>${roleOpts()}</select></div><div class="f"><label>Bypass roles</label><select id="f_bypass" multiple>${roleOpts()}</select></div></div>
+  <div class="f2"><label class="chk"><input type="checkbox" id="f_boost"> Must be boosting the server</label><label class="chk"><input type="checkbox" id="f_tag"> Must have the server tag equipped</label></div>
+  <div class="f4" style="margin-top:14px"><div class="f"><label>Messages today</label><input id="f_daily" type="number" min="0" value="0"></div><div class="f"><label>This week</label><input id="f_weekly" type="number" min="0" value="0"></div><div class="f"><label>This month</label><input id="f_monthly" type="number" min="0" value="0"></div><div class="f"><label>Total</label><input id="f_total" type="number" min="0" value="0"></div></div>
+  <h3 class="sec">Extra entries</h3><div id="xrows"></div><button type="button" class="btn sm" id="addx">+ Add role</button>
+  <h3 class="sec">Winners</h3>
+  <div class="f2"><div class="f"><label>Claim time (optional)</label><input id="f_claim" placeholder="e.g. 24 hours"><div class="hint">Winners get a Claim button in their DMs and are rerolled if they don't use it in time.</div></div><div class="f"><label>Role given to winners</label><select id="f_wrole"><option value="">None</option>${roleOpts()}</select></div></div>
+  <div class="f"><label>DM message to winners (use {prize} and {server})</label><textarea id="f_dm" rows="2" maxlength="1500"></textarea></div>
+  <div class="f"><label>Message sent after creating</label><input id="f_cmsg" maxlength="1500"></div>
+  <h3 class="sec">Look</h3>
+  <div class="f2"><div class="f"><label>Embed colour</label><input id="f_color" type="color" value="#5865f2"></div><div class="f"><label>Colour after it ends</label><input id="f_ecolor" type="color" value="#2b2d31"></div></div>
+  <div class="f2"><div class="f"><label>Image URL (https)</label><input id="f_image" placeholder="https://..."></div><div class="f"><label>Thumbnail URL (https)</label><input id="f_thumb" placeholder="https://..."></div></div>
+  <div class="acts" style="margin-top:8px"><button class="btn main" id="f_go">🎉 Create giveaway</button></div></div>`;
+  document.getElementById('addx').onclick=()=>addXRow();
+  document.getElementById('f_go').onclick=async e=>{
+    e.target.disabled=true;
+    const x=await post('/api/server/'+SID+'/giveaway',{prize:val('f_prize'),duration:val('f_duration'),winners:val('f_winners'),channelId:val('f_channel'),requiredRoles:sel('f_req'),bypass:sel('f_bypass'),
+      boosts:document.getElementById('f_boost').checked,serverTag:document.getElementById('f_tag').checked,daily:val('f_daily'),weekly:val('f_weekly'),monthly:val('f_monthly'),total:val('f_total'),
+      extra:[...document.querySelectorAll('.xrow')].map(r=>({role:r.querySelector('.xr').value,entries:r.querySelector('.xn').value})),
+      claimTime:val('f_claim'),winnersRole:val('f_wrole'),dmMessage:val('f_dm'),createMessage:val('f_cmsg'),color:val('f_color'),endColor:val('f_ecolor'),image:val('f_image'),thumbnail:val('f_thumb')});
+    e.target.disabled=false;
+    if(x.ok){curTab='Giveaways';await server(SID,ME);flash(`✅ Giveaway created! <a href="/giveaway/${x.d.id}" style="text-decoration:underline">View it</a>`,true)}
+    else flash(esc(x.d.error||'Something went wrong.'),false);
+  };
+}
+async function clone(id){
+  const r=await api('/api/giveaway/'+id+'/config');if(!r.ok)return flash(esc(r.d.error),false);
+  const c=r.d;curTab='Create';document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x.dataset.t==='Create'));showTab();
+  const set=(i,v)=>{document.getElementById(i).value=v??''},ms=(i,arr)=>[...document.getElementById(i).options].forEach(o=>o.selected=(arr||[]).includes(o.value));
+  set('f_prize',c.prize);set('f_winners',c.winners);if(SV.channels.some(x=>x.id===c.channelId))set('f_channel',c.channelId);
+  ms('f_req',c.req.roles);ms('f_bypass',c.bypass);document.getElementById('f_boost').checked=!!c.req.boosts;document.getElementById('f_tag').checked=!!c.req.serverTag;
+  set('f_daily',c.req.daily);set('f_weekly',c.req.weekly);set('f_monthly',c.req.monthly);set('f_total',c.req.total);
+  c.extra.forEach(e=>addXRow(e.role,e.entries));set('f_claim',c.claimTime);set('f_wrole',c.winnersRole);set('f_dm',c.dmMessage);set('f_color',c.color);set('f_ecolor',c.endColor);set('f_image',c.image);set('f_thumb',c.thumbnail);
+  flash('Settings copied. Enter a new duration and create it.',true);document.getElementById('f_duration').focus();
+}
+function tabSettings(t){
+  const st=SV.settings,opts=ids=>SV.roles.map(r=>`<option value="${r.id}" ${ids.includes(r.id)?'selected':''}>${esc(r.name)}</option>`).join('');
+  t.innerHTML=`<div class="card"><div class="t" style="margin-bottom:6px">Who can use the bot</div><p class="muted" style="margin-top:0">Members with Manage Server can always do everything.</p>
+  <div class="f2"><div class="f"><label>Manager roles (can use every command)</label><select id="s_man" multiple>${opts(st.managerRoles)}</select></div><div class="f"><label>Creator roles (can only create giveaways)</label><select id="s_cre" multiple>${opts(st.creatorRoles)}</select></div></div>
+  <div class="hint" style="margin-bottom:14px">Hold Ctrl/Cmd to select several. Deselect all to clear.</div><button class="btn main" id="s_go">Save roles</button></div>`;
+  document.getElementById('s_go').onclick=async()=>{const x=await post('/api/server/'+SID+'/roles',{managerRoles:sel('s_man'),creatorRoles:sel('s_cre')});
+    if(x.ok){await server(SID,ME);flash('✅ Roles saved.',true)}else flash(esc(x.d.error),false)};
+}
+function tabStats(t){
+  const s=SV.stats;
+  t.innerHTML=`<div class="stats"><div class="st"><b>${s.live}</b><span>Live giveaways</span></div><div class="st"><b>${s.entries}</b><span>Entries right now</span></div><div class="st"><b>${s.hosted}</b><span>Giveaways hosted</span></div><div class="st"><b>${s.members}</b><span>Members</span></div></div>
+  <h2>Top chatters</h2><div class="card">${SV.top.length?SV.top.map((u,i)=>`<div class="prow"><span>${i+1}. ${esc(u.username)}</span><span class="muted">${u.total} messages</span></div>`).join(''):'<span class="muted">No messages counted yet.</span>'}</div>`;
 }
 
 (async()=>{
   const me=(await api('/api/me')).d;nav(me);
-  const m=location.pathname.match(/^\/giveaway\/(\d+)/);
-  m?await detail(m[1],me):await dashboard(me);
+  const p=location.pathname;let m;
+  if(m=p.match(/^\/giveaway\/(\d+)/))await detail(m[1],me);
+  else if(m=p.match(/^\/dashboard\/server\/(\d+)/))await server(m[1],me);
+  else await home(me);
   tick();clearInterval(timer);timer=setInterval(tick,1000);
 })();
 </script>
