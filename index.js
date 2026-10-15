@@ -1,7 +1,7 @@
 require('dotenv').config();
 const fs = require('fs');
 const {
-  Client, GatewayIntentBits, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder,
+  Client, GatewayIntentBits, IntentsBitField, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder,
   ButtonBuilder, ButtonStyle, RoleSelectMenuBuilder, StringSelectMenuBuilder, ModalBuilder, TextInputBuilder,
   TextInputStyle, REST, Routes, PermissionFlagsBits, MessageFlags, ChannelType, ActivityType,
 } = require('discord.js');
@@ -10,7 +10,7 @@ const TICK_ID = '1559999432597180516', CROSS_ID = '1559999451513487529';
 const TICK = `<:tick:${TICK_ID}>`, CROSS = `<:cross:${CROSS_ID}>`;
 const CONE_ID = '1560018755701186610', GIFT_ID = '1560018740362608721', MEMBERS_ID = '1560018723794845846';
 const CONE = `<:cone:${CONE_ID}>`, GIFT = `<:gift:${GIFT_ID}>`, MEMBERS = `<:members:${MEMBERS_ID}>`;
-const WEB_ID = '1560011706170736690', WEB = `<:website:${WEB_ID}>`;
+const WEB_ID = '1560217018312032277', WEB = `<:website:${WEB_ID}>`;
 const withEmoji = (t) => String(t).replace(/✅/g, TICK).replace(/❌/g, CROSS);
 const BASE = (process.env.RENDER_EXTERNAL_URL || process.env.BASE_URL || '').replace(/\/$/, '');
 
@@ -62,6 +62,7 @@ async function addBlacklist(gid, uid) {
   if (!bl.includes(uid)) bl.push(uid);
   for (const g of Object.values(db.giveaways)) if (g.guildId === gid && !g.ended && g.entries[uid]) { delete g.entries[uid]; refreshMessage(g); }
   save();
+  logEvent(gid, '🚫 Blacklist updated', `<@${uid}> was blacklisted`);
 }
 const guildCfg = (id) => (db.guilds[id] ??= { creatorRoles: [], managerRoles: [] });
 
@@ -115,7 +116,7 @@ function embedFor(g, ended = false) {
     .setTitle(g.prize)
     .setColor(ended ? g.endColor : g.color)
     .setDescription([
-      `**Ends:** <t:${Math.floor(g.endsAt / 1000)}:R> (<t:${Math.floor(g.endsAt / 1000)}:f>)`,
+      g.paused ? `**Status:** ⏸️ Paused (${shortLeft(g.pausedLeft)} left)` : `**Ends:** <t:${Math.floor(g.endsAt / 1000)}:R> (<t:${Math.floor(g.endsAt / 1000)}:f>)`,
       `**Hosted by:** <@${g.host}>`,
       `**Winners:** ${g.winners}`,
       `**Entries:** ${Object.keys(g.entries).length}`,
@@ -144,12 +145,13 @@ function reqText(g) {
 const enterRow = (g, disabled = false) => {
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('gw_enter').setLabel(String(Object.keys(g.entries).length)).setEmoji({ id: CONE_ID }).setStyle(ButtonStyle.Primary).setDisabled(disabled),
-    new ButtonBuilder().setCustomId(`gw_parts:${g.messageId}`).setLabel('Participants').setEmoji({ id: MEMBERS_ID }).setStyle(ButtonStyle.Secondary));
+    new ButtonBuilder().setCustomId(`gw_parts:${g.messageId}`).setLabel('Participants').setEmoji({ id: MEMBERS_ID }).setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('gw_remind').setEmoji('🔔').setStyle(ButtonStyle.Secondary).setDisabled(disabled));
   return row;
 };
 
 /* ───────────── core giveaway logic ───────────── */
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages] });
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
 
 function pickWinners(g, count, exclude = []) {
   const pool = Object.entries(g.entries).filter(([id]) => !exclude.includes(id));
@@ -211,6 +213,7 @@ async function announce(g, ch, winners) {
   if (winners.length) payload.content = winners.map((w) => `<@${w}>`).join(' ');   // ping
   payload.embeds = [new EmbedBuilder().setColor(winners.length ? 0x57f287 : 0xed4245).setTitle(`${CONE} Giveaway ended`).setDescription(desc)];
   await ch.send(payload).catch(() => {});
+  logEvent(g.guildId, `${CONE} Winners announced`, `**${g.prize}**: ${winners.length ? winners.map((w) => `<@${w}>`).join(', ') : 'no valid entries'}`);
 }
 async function endGiveaway(g) {
   g.ended = true;
@@ -221,6 +224,7 @@ async function endGiveaway(g) {
   const { ch, msg } = await fetchMsg(g);
   if (msg) await msg.edit({ embeds: [embedFor(g, true)], components: [enterRow(g, true)] }).catch(() => {});
   if (ch) await announce(g, ch, g.winnerIds);
+  notifyReminders(g);
 }
 async function rerollUnclaimed(g) {
   const lost = g.winnerIds.filter((w) => !g.claimed.includes(w));
@@ -237,7 +241,7 @@ async function rerollUnclaimed(g) {
 setInterval(async () => {
   for (const g of Object.values(db.giveaways)) {
     try {
-      if (!g.ended && g.endsAt <= Date.now()) await endGiveaway(g);
+      if (!g.ended && !g.paused && g.endsAt <= Date.now()) await endGiveaway(g);
       else if (g.ended && g.claimDeadline && g.claimDeadline <= Date.now()) await rerollUnclaimed(g);
     } catch (e) { console.error(e); }
   }
@@ -249,6 +253,7 @@ const checkEntry = (i, g) => checkEntryFor(i.member, i.user.id, i.guildId, g);
 async function checkEntryFor(m, uid, gid, g) {
   const r = g.req;
   if (blacklistOf(gid).includes(uid)) return '🚫 You are blacklisted from giveaways in this server.';
+  if ((guildCfg(gid).blacklistRoles || []).some((r) => m?.roles?.cache?.has(r))) return '🚫 One of your roles is blacklisted from giveaways in this server.';
   if (g.bypass.some((x) => m.roles.cache.has(x))) return null;
   const s = statsOf(gid, uid);
   if (r.roles.length && !r.roles.every((x) => m.roles.cache.has(x))) return 'You are missing a required role.';
@@ -306,7 +311,8 @@ const addGiveawayOptions = (s, afterRequired) => {
 };
 gw.addSubcommand((s) => addGiveawayOptions(s.setName('create').setDescription('Create a giveaway')));
 gw.addSubcommand((s) => addGiveawayOptions(s.setName('schedule').setDescription('Schedule a giveaway to start later'),
-  (r) => r.addStringOption((o) => o.setName('start').setDescription('When it starts, like 2 hours or 1 day, or a Discord timestamp').setRequired(true))));
+  (r) => r.addStringOption((o) => o.setName('start').setDescription('When it starts, like 2 hours or 1 day, or a Discord timestamp').setRequired(true))
+    .addStringOption((o) => o.setName('repeat').setDescription('Repeat every, like 1 day or 1 week (cancel with /giveaway unschedule)'))));
 gw.addSubcommand((s) => s.setName('scheduled').setDescription('View giveaways that are scheduled to start'));
 gw.addSubcommand((s) => s.setName('unschedule').setDescription('Cancel a scheduled giveaway')
   .addStringOption((o) => o.setName('schedule').setDescription('Pick the scheduled giveaway to cancel').setRequired(true).setAutocomplete(true)));
@@ -322,14 +328,303 @@ gw.addSubcommand((s) => idOpt(s.setName('fix').setDescription('Fix a giveaway if
 gw.addSubcommand((s) => s.setName('manager-roles').setDescription('Set roles with which people can use every command in the bot'));
 gw.addSubcommand((s) => idOpt(s.setName('participants').setDescription('View the users that have participated in a giveaway'), 'Giveaway message ID'));
 gw.addSubcommand((s) => idOpt(s.setName('reroll').setDescription('Reroll the winner of a giveaway with the giveaway message ID'), 'Giveaway message ID'));
+gw.addSubcommand((s) => s.setName('list').setDescription('See every running giveaway in this server'));
+gw.addSubcommand((s) => idOpt(s.setName('pause').setDescription('Pause a running giveaway'), 'Pick the giveaway to pause'));
+gw.addSubcommand((s) => idOpt(s.setName('resume').setDescription('Resume a paused giveaway'), 'Pick the giveaway to resume'));
+gw.addSubcommand((s) => s.setName('winners').setDescription('See the winners of a giveaway, or recent winners')
+  .addStringOption((o) => o.setName('message-id').setDescription('Pick a giveaway (leave empty for recent winners)').setAutocomplete(true)));
+gw.addSubcommand((s) => idOpt(s.setName('add-entries').setDescription('Give someone bonus entries'), 'Pick the giveaway')
+  .addUserOption((o) => o.setName('user').setDescription('Who gets the entries').setRequired(true))
+  .addIntegerOption((o) => o.setName('entries').setDescription('How many entries to add').setRequired(true).setMinValue(1).setMaxValue(100)));
+gw.addSubcommand((s) => s.setName('drop').setDescription('Start a drop: the first people to click win')
+  .addStringOption((o) => o.setName('prize').setDescription('What is being dropped').setRequired(true))
+  .addIntegerOption((o) => o.setName('winners').setDescription('How many people can win (default 1)').setMinValue(1).setMaxValue(20))
+  .addChannelOption((o) => o.setName('channel').setDescription('Where to post the drop')));
 
 const messagesCmd = new SlashCommandBuilder().setName('messages').setDescription('View the number of messages you/other user has sent').setDMPermission(false)
   .addUserOption((o) => o.setName('user').setDescription('User to look up'));
 
+/* ───────────── logging, defaults, reminders ───────────── */
+async function logEvent(gid, title, description) {
+  try {
+    const id = guildCfg(gid).logChannel;
+    if (!id) return;
+    const ch = await client.channels.fetch(id).catch(() => null);
+    if (ch) await ch.send({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle(title).setDescription(String(description).slice(0, 4000)).setTimestamp()], allowedMentions: { parse: [] } });
+  } catch { /* logging must never break anything */ }
+}
+function defaultChannel(i) {
+  const id = guildCfg(i.guildId).defaultChannel;
+  return id ? i.guild?.channels.cache.get(id) : null;
+}
+async function notifyReminders(g) {
+  const list = g.reminders || [];
+  if (!list.length) return;
+  g.reminders = []; save();
+  const e = new EmbedBuilder().setColor(g.endColor).setTitle(`${CONE} Giveaway ended`)
+    .setDescription(`**${g.prize}** has ended!\nWinners: ${g.winnerIds.length ? g.winnerIds.map((w) => `<@${w}>`).join(', ') : 'nobody'}\n\n[Jump to giveaway](${gLink(g)})`);
+  for (const u of list.slice(0, 500)) {
+    client.users.fetch(u).then((x) => x.send({ embeds: [e], components: [linkRow(g)] })).catch(() => {});
+    await new Promise((r) => setTimeout(r, 120));
+  }
+}
+
+/* ───────────── drops: first to click wins ───────────── */
+const dropOver = (d) => d.claimed.length >= d.winners;
+const dropEmbed = (d) => new EmbedBuilder().setColor(dropOver(d) ? 0x2b2d31 : 0xffb340).setTitle(`${CONE} Drop: ${d.prize}`)
+  .setDescription(dropOver(d)
+    ? `Drop over! Winner${d.winners > 1 ? 's' : ''}: ${d.claimed.map((u) => `<@${u}>`).join(', ')}`
+    : `First **${d.winners}** to click **Claim** win${d.winners > 1 ? '' : 's'}!${d.claimed.length ? `\nClaimed so far: ${d.claimed.map((u) => `<@${u}>`).join(', ')}` : ''}\nHosted by <@${d.host}>`)
+  .setFooter({ text: dropOver(d) ? 'Drop over' : `${d.winners - d.claimed.length} left` });
+const dropRow = (d) => new ActionRowBuilder().addComponents(
+  new ButtonBuilder().setCustomId('gw_drop').setLabel('Claim').setEmoji({ id: GIFT_ID }).setStyle(ButtonStyle.Success).setDisabled(dropOver(d)));
+async function launchDrop(o) {
+  const d = { guildId: o.guildId, channelId: o.ch.id, prize: o.prize, winners: o.winners, host: o.host, claimed: [], messageId: null };
+  const pingRole = guildCfg(o.guildId).pingRole;
+  const msg = await o.ch.send({ content: pingRole ? `<@&${pingRole}>` : undefined, embeds: [dropEmbed(d)], components: [dropRow(d)], allowedMentions: { roles: pingRole ? [pingRole] : [] } });
+  d.messageId = msg.id; (db.drops ??= {})[msg.id] = d; save();
+  logEvent(o.guildId, `${GIFT} Drop started`, `**${d.prize}** in <#${d.channelId}> · ${d.winners} winner${d.winners > 1 ? 's' : ''}`);
+}
+async function onDrop(i) {
+  const d = (db.drops ??= {})[i.message.id];
+  if (!d) return i.reply({ content: 'This drop is no longer available.', ...eph });
+  if (dropOver(d)) return i.reply({ content: 'Too late, this drop was already claimed.', ...eph });
+  if (d.claimed.includes(i.user.id)) return i.reply({ content: 'You already claimed this drop.', ...eph });
+  const fail = await checkEntryFor(i.member, i.user.id, i.guildId, { bypass: [], req: { roles: [], boosts: 0, serverTag: false, daily: 0, weekly: 0, monthly: 0, total: 0 } });
+  if (fail) return i.reply({ content: `❌ ${fail}`, ...eph });
+  if (dropOver(d)) return i.reply({ content: 'Too late, this drop was already claimed.', ...eph });
+  d.claimed.push(i.user.id); save();
+  await i.update({ embeds: [dropEmbed(d)], components: [dropRow(d)] });
+  await i.followUp({ content: `${GIFT} You got it! You claimed **${d.prize}**.`, ...eph }).catch(() => {});
+  if (dropOver(d)) {
+    await i.channel.send({ content: d.claimed.map((u) => `<@${u}>`).join(' '), allowedMentions: { users: d.claimed },
+      embeds: [new EmbedBuilder().setColor(0x57f287).setTitle(`${CONE} Drop claimed`).setDescription(`${d.claimed.map((u) => `<@${u}>`).join(', ')} won **${d.prize}**! <@${d.host}>, they're ready for their prize.`)] }).catch(() => {});
+    logEvent(i.guildId, `${GIFT} Drop claimed`, `**${d.prize}** was won by ${d.claimed.map((u) => `<@${u}>`).join(', ')}`);
+  }
+}
+async function dropCommand(i) {
+  const ch = i.options.getChannel('channel') || defaultChannel(i) || i.channel;
+  if (!ch?.isTextBased()) return i.reply({ content: 'Pick a text channel.', ...eph });
+  await launchDrop({ guildId: i.guildId, ch, prize: i.options.getString('prize'), winners: i.options.getInteger('winners') || 1, host: i.user.id });
+  return i.reply({ content: `✅ Drop started in ${ch}.`, ...eph });
+}
+
+/* ───────────── lists and stats ───────────── */
+function listGiveaways(i) {
+  const live = Object.values(db.giveaways).filter((g) => g.guildId === i.guildId && !g.ended).sort((a, b) => a.endsAt - b.endsAt).slice(0, 15);
+  return i.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle(`${CONE} Running giveaways`)
+    .setDescription(live.map((g) => `${g.paused ? '⏸️' : '•'} **${g.prize}** · <#${g.channelId}> · ${g.paused ? 'paused' : `ends <t:${Math.floor(g.endsAt / 1000)}:R>`} · ${Object.keys(g.entries).length} entries · [jump](${gLink(g)})`).join('\n').slice(0, 4000)
+      || 'No giveaways are running right now.')], allowedMentions: { parse: [] } });
+}
+async function winnersCmd(i) {
+  const id = i.options.getString('message-id');
+  if (id) {
+    const g = db.giveaways[id];
+    if (!g || g.guildId !== i.guildId) return i.reply({ content: 'Giveaway not found.', ...eph });
+    if (!g.ended) return i.reply({ content: '❌ That giveaway has not ended yet.', ...eph });
+    const lines = g.winnerIds.map((w) => `• <@${w}> ${(g.claimed || []).includes(w) ? `${TICK} claimed` : g.claimMs ? '⏳ not claimed' : ''}`);
+    return i.reply({ embeds: [new EmbedBuilder().setColor(g.endColor).setTitle(`${CONE} Winners: ${g.prize}`).setDescription(lines.join('\n') || 'No valid entries.')
+      .addFields({ name: 'Entries', value: String(Object.keys(g.entries).length), inline: true }, { name: 'Ended', value: `<t:${Math.floor(g.endsAt / 1000)}:R>`, inline: true })], allowedMentions: { parse: [] }, ...eph });
+  }
+  const recent = Object.values(db.giveaways).filter((g) => g.guildId === i.guildId && g.ended).sort((a, b) => b.endsAt - a.endsAt).slice(0, 10);
+  return i.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle(`${CONE} Recent winners`)
+    .setDescription(recent.map((g) => `**${g.prize}**: ${g.winnerIds.length ? g.winnerIds.map((w) => `<@${w}>`).join(', ') : 'no winners'} · <t:${Math.floor(g.endsAt / 1000)}:d>`).join('\n').slice(0, 4000) || 'No giveaways have ended yet.')],
+    allowedMentions: { parse: [] }, ...eph });
+}
+async function myWins(i) {
+  const won = Object.values(db.giveaways).filter((g) => g.guildId === i.guildId && g.ended && g.winnerIds.includes(i.user.id)).sort((a, b) => b.endsAt - a.endsAt);
+  const drops = Object.values(db.drops || {}).filter((d) => d.guildId === i.guildId && d.claimed.includes(i.user.id));
+  const lines = [
+    ...won.map((g) => `• **${g.prize}** · <t:${Math.floor(g.endsAt / 1000)}:d> · ${g.claimMs ? ((g.claimed || []).includes(i.user.id) ? `${TICK} claimed` : '⏳ not claimed') : 'won'} · [jump](${gLink(g)})`),
+    ...drops.map((d) => `• **${d.prize}** (drop) · [jump](https://discord.com/channels/${d.guildId}/${d.channelId}/${d.messageId})`)];
+  return i.reply({ embeds: [new EmbedBuilder().setColor(0xffb340).setTitle(`${CONE} Your wins`).setDescription(lines.slice(0, 15).join('\n').slice(0, 4000) || "You haven't won a giveaway here yet. Good luck!")], ...eph });
+}
+async function myEntries(i) {
+  const mine = Object.values(db.giveaways).filter((g) => g.guildId === i.guildId && !g.ended && g.entries[i.user.id]).sort((a, b) => a.endsAt - b.endsAt);
+  return i.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle(`${MEMBERS} Your entries`)
+    .setDescription(mine.slice(0, 15).map((g) => `• **${g.prize}** · ${g.entries[i.user.id]} ${g.entries[i.user.id] === 1 ? 'entry' : 'entries'} · ${g.paused ? 'paused' : `ends <t:${Math.floor(g.endsAt / 1000)}:R>`} · [jump](${gLink(g)})`).join('\n').slice(0, 4000)
+      || "You haven't entered any running giveaways.")], ...eph });
+}
+async function leaderboardCommand(i) {
+  const period = i.options.getString('period') || 'total';
+  const days = { today: 1, week: weekDays(), month: monthDays() }[period];
+  const rows = Object.entries(db.stats[i.guildId] || {}).map(([id, st]) => [id, days ? countSince(st, days) : st.total]).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  const label = { today: 'Today', week: 'This week', month: 'This month', total: 'All time' }[period];
+  const medal = ['🥇', '🥈', '🥉'];
+  return i.reply({ embeds: [new EmbedBuilder().setColor(0xffb340).setTitle(`💬 Top chatters: ${label}`)
+    .setDescription(rows.map(([id, n], k) => `${medal[k] || `**${k + 1}.**`} <@${id}> · ${n} message${n === 1 ? '' : 's'}`).join('\n') || 'No messages counted yet.')], allowedMentions: { parse: [] } });
+}
+async function statsCommand(i) {
+  const all = Object.values(db.giveaways).filter((g) => g.guildId === i.guildId), live = all.filter((g) => !g.ended);
+  const drops = Object.values(db.drops || {}).filter((d) => d.guildId === i.guildId), cfg = guildCfg(i.guildId);
+  return i.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle(`${CONE} Giveaway stats`).addFields(
+    { name: 'Hosted', value: String(all.length), inline: true }, { name: 'Running', value: String(live.length), inline: true }, { name: 'Ended', value: String(all.length - live.length), inline: true },
+    { name: 'Entries in running giveaways', value: String(live.reduce((n, g) => n + Object.keys(g.entries).length, 0)), inline: true },
+    { name: 'Winners picked', value: String(all.reduce((n, g) => n + g.winnerIds.length, 0)), inline: true }, { name: 'Drops', value: String(drops.length), inline: true },
+    { name: 'Scheduled', value: String(Object.values(scheduledMap()).filter((x) => x.guildId === i.guildId).length), inline: true },
+    { name: 'Templates', value: String(Object.keys(cfg.templates || {}).length), inline: true },
+    { name: 'Blacklisted', value: `${blacklistOf(i.guildId).length} people, ${(cfg.blacklistRoles || []).length} roles`, inline: true })] });
+}
+
+/* ───────────── templates ───────────── */
+async function templateCommand(i) {
+  const sub = i.options.getSubcommand(), tpls = (guildCfg(i.guildId).templates ??= {});
+  if (sub === 'save' || sub === 'delete') { if (!isManager(i)) return i.reply({ content: 'You need Manage Server or a manager role.', ...eph }); }
+  else if (!isCreator(i)) return i.reply({ content: 'You need Manage Server, a manager role, or a creator role.', ...eph });
+  if (sub === 'list') {
+    return i.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle('📋 Templates')
+      .setDescription(Object.entries(tpls).map(([n, t]) => `• **${n}**: ${t.prize} · ${t.winners} winner${t.winners > 1 ? 's' : ''}`).join('\n').slice(0, 4000) || 'No templates yet. Use `/template save`.')], ...eph });
+  }
+  const name = i.options.getString('name').trim().slice(0, 32);
+  if (sub === 'delete') {
+    if (!tpls[name]) return i.reply({ content: '❌ Template not found.', ...eph });
+    delete tpls[name]; save();
+    return i.reply({ content: `✅ Deleted the template **${name}**.`, ...eph });
+  }
+  if (sub === 'save') {
+    const g = db.giveaways[i.options.getString('message-id')];
+    if (!g || g.guildId !== i.guildId) return i.reply({ content: 'Giveaway not found.', ...eph });
+    if (!tpls[name] && Object.keys(tpls).length >= 25) return i.reply({ content: '❌ You can have up to 25 templates.', ...eph });
+    tpls[name] = JSON.parse(JSON.stringify({ prize: g.prize, winners: g.winners, extra: g.extra, winnersRole: g.winnersRole, claimMs: g.claimMs, dmMessage: g.dmMessage,
+      image: g.image, thumbnail: g.thumbnail, color: g.color, endColor: g.endColor, bypass: g.bypass, req: g.req }));
+    save();
+    return i.reply({ content: `✅ Saved the template **${name}**. Use it with \`/template use\`.`, ...eph });
+  }
+  const tpl = tpls[name];
+  if (!tpl) return i.reply({ content: '❌ Template not found.', ...eph });
+  const endsAt = parseDuration(i.options.getString('duration'));
+  if (!endsAt || endsAt <= Date.now()) return i.reply({ content: 'Invalid duration. Try `1 hour`, `2 days` or a Discord timestamp.', ...eph });
+  const ch = i.options.getChannel('channel') || defaultChannel(i) || i.channel;
+  if (!ch?.isTextBased()) return i.reply({ content: 'Pick a text channel.', ...eph });
+  await launchGiveaway({ ...JSON.parse(JSON.stringify(tpl)), guildId: i.guildId, ch, endsAt, host: i.user.id,
+    prize: i.options.getString('prize') || tpl.prize, winners: i.options.getInteger('winners') || tpl.winners });
+  return i.reply({ content: `✅ Giveaway started from **${name}** in ${ch}.`, ...eph });
+}
+
+/* ───────────── settings ───────────── */
+async function settingsCommand(i) {
+  if (!isManager(i)) return i.reply({ content: 'You need Manage Server or a manager role.', ...eph });
+  const sub = i.options.getSubcommand(), cfg = guildCfg(i.guildId);
+  if (sub === 'view') {
+    const roles = (a) => (a && a.length ? a.map((r) => `<@&${r}>`).join(' ') : 'None');
+    return i.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle('⚙️ Settings').addFields(
+      { name: 'Log channel', value: cfg.logChannel ? `<#${cfg.logChannel}>` : 'Off', inline: true },
+      { name: 'Ping role', value: cfg.pingRole ? `<@&${cfg.pingRole}>` : 'Off', inline: true },
+      { name: 'Default colour', value: cfg.defaultColor != null ? hex(cfg.defaultColor) : 'Default', inline: true },
+      { name: 'Default channel', value: cfg.defaultChannel ? `<#${cfg.defaultChannel}>` : 'The channel you run the command in', inline: true },
+      { name: 'Manager roles', value: roles(cfg.managerRoles) }, { name: 'Creator roles', value: roles(cfg.creatorRoles) })], allowedMentions: { parse: [] }, ...eph });
+  }
+  if (sub === 'log-channel' || sub === 'default-channel') {
+    const c = i.options.getChannel('channel'), key = sub === 'log-channel' ? 'logChannel' : 'defaultChannel';
+    cfg[key] = c ? c.id : null; save();
+    return i.reply({ content: c ? `✅ ${sub === 'log-channel' ? 'Log' : 'Default'} channel set to ${c}.` : `✅ ${sub === 'log-channel' ? 'Logging turned off' : 'Default channel reset'}.`, ...eph });
+  }
+  if (sub === 'ping-role') {
+    const r = i.options.getRole('role');
+    cfg.pingRole = r ? r.id : null; save();
+    return i.reply({ content: r ? `✅ I'll ping ${r} when a giveaway starts.` : '✅ Ping role turned off.', allowedMentions: { parse: [] }, ...eph });
+  }
+  const v = (i.options.getString('color') || '').trim();
+  if (v && !/^#?[0-9a-f]{6}$/i.test(v)) return i.reply({ content: 'Invalid colour. Use a hex code like `#5865F2`.', ...eph });
+  cfg.defaultColor = v ? parseColor(v, 0x5865f2) : null; save();
+  return i.reply({ content: v ? `✅ Default colour set to ${hex(cfg.defaultColor)}.` : '✅ Default colour reset.', ...eph });
+}
+
+/* ───────────── .gv test commands (testers only) ───────────── */
+const GV_USERS = ['1411789389163401277', '1423109124803264623'];
+const GV_HELP = '`.gv test` or `.gv test help` this list\n`.gv test dummy [giveaway-id] [count]` add dummy users to a giveaway (default: newest running giveaway, 5 users)\n`.gv test undummy [giveaway-id]` remove the dummy users again\n`.gv say <text>` make the bot say something\n`.gv emojis` list every emoji uploaded to the bot';
+async function handleGv(m) {
+  const args = m.content.trim().split(/\s+/).slice(1), cmd = (args[0] || '').toLowerCase();
+  const reply = (e) => m.reply({ embeds: [e], allowedMentions: { repliedUser: false } }).catch(() => {});
+  const note = (text, ok = true) => reply(new EmbedBuilder().setColor(ok ? 0x57f287 : 0xed4245).setDescription(`${ok ? TICK : CROSS} ${text}`));
+  const showHelp = () => reply(new EmbedBuilder().setColor(0x5865f2).setTitle('🧪 Test commands').setDescription(GV_HELP).setFooter({ text: 'Only testers can use these' }));
+
+  if (cmd === 'say') {
+    const text = m.content.replace(/^\s*\.gv\s+say\s*/i, '');
+    if (!text.trim()) return note('Say what? Use `.gv say <text>`.', false);
+    if (m.guild) await m.delete().catch(() => {});
+    return m.channel.send({ content: text.slice(0, 2000), allowedMentions: { parse: ['users', 'roles'] } });
+  }
+  if (cmd === 'emojis') {
+    const list = [...(await client.application.emojis.fetch()).values()];
+    if (!list.length) return note('The bot has no emojis uploaded.', false);
+    const lines = list.map((e) => `${e.animated ? '<a:' : '<:'}${e.name}:${e.id}> \`:${e.name}:\` \`${e.id}\``);
+    const pages = [];
+    let cur = '';
+    for (const l of lines) { if ((cur + l).length > 3800) { pages.push(cur); cur = ''; } cur += `${l}\n`; }
+    pages.push(cur);
+    for (let k = 0; k < pages.length; k++) {
+      await m.channel.send({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle(`Bot emojis (${list.length})${pages.length > 1 ? ` · page ${k + 1}/${pages.length}` : ''}`).setDescription(pages[k])] });
+    }
+    return;
+  }
+  if (cmd === 'test' || cmd === '') {
+    const sub = (args[1] || 'help').toLowerCase();
+    if (sub === 'help') return showHelp();
+    if (sub === 'dummy' || sub === 'undummy') {
+      if (!m.guild) return note('Use this in a server.', false);
+      const idArg = args.slice(2).find((x) => /^\d{15,}$/.test(x)), countArg = args.slice(2).find((x) => /^\d{1,3}$/.test(x));
+      const live = Object.values(db.giveaways).filter((x) => x.guildId === m.guild.id && !x.ended).sort((x, y) => (BigInt(y.messageId) > BigInt(x.messageId) ? 1 : -1));
+      const g = idArg ? db.giveaways[idArg] : live[0];
+      if (!g || g.guildId !== m.guild.id) return note(idArg ? 'Giveaway not found.' : 'There is no running giveaway in this server.', false);
+      g.dummies ??= [];
+      if (sub === 'undummy') {
+        for (const d of g.dummies) delete g.entries[d];
+        const n = g.dummies.length; g.dummies = []; save();
+        if (!g.ended) await refreshMessage(g);
+        return note(`Removed **${n}** dummy users from **${g.prize}**.`);
+      }
+      if (g.ended) return note('That giveaway has already ended.', false);
+      const count = Math.min(Math.max(parseInt(countArg, 10) || 5, 1), 200);
+      let added = 0;
+      while (added < count) {
+        const id = `99${String(Math.floor(Math.random() * 1e16)).padStart(16, '0')}`;
+        if (g.entries[id]) continue;
+        g.entries[id] = 1; g.dummies.push(id); added++;
+      }
+      save(); await refreshMessage(g);
+      return note(`Added **${added}** dummy users to **${g.prize}** (now ${Object.keys(g.entries).length} entries). Remove them with \`.gv test undummy\`.`);
+    }
+  }
+  return showHelp();
+}
+
+const textCh = [ChannelType.GuildText, ChannelType.GuildAnnouncement];
+const templateCmd = new SlashCommandBuilder().setName('template').setDescription('Save and reuse giveaway settings').setDMPermission(false)
+  .addSubcommand((s) => s.setName('save').setDescription("Save a giveaway's settings as a template")
+    .addStringOption((o) => o.setName('name').setDescription('Template name').setRequired(true).setMaxLength(32))
+    .addStringOption((o) => o.setName('message-id').setDescription('Pick the giveaway to copy').setRequired(true).setAutocomplete(true)))
+  .addSubcommand((s) => s.setName('use').setDescription('Start a giveaway from a template')
+    .addStringOption((o) => o.setName('name').setDescription('Pick a template').setRequired(true).setAutocomplete(true))
+    .addStringOption((o) => o.setName('duration').setDescription('How long it lasts, like 1 hour or 2 days').setRequired(true))
+    .addChannelOption((o) => o.setName('channel').setDescription('Where to post it').addChannelTypes(...textCh))
+    .addStringOption((o) => o.setName('prize').setDescription('Use a different prize'))
+    .addIntegerOption((o) => o.setName('winners').setDescription('Use a different winner count').setMinValue(1).setMaxValue(50)))
+  .addSubcommand((s) => s.setName('list').setDescription('See your saved templates'))
+  .addSubcommand((s) => s.setName('delete').setDescription('Delete a template')
+    .addStringOption((o) => o.setName('name').setDescription('Pick a template').setRequired(true).setAutocomplete(true)));
+const leaderboardCmd = new SlashCommandBuilder().setName('leaderboard').setDescription('Server leaderboards').setDMPermission(false)
+  .addSubcommand((s) => s.setName('messages').setDescription('Top chatters in this server')
+    .addStringOption((o) => o.setName('period').setDescription('Time period').addChoices({ name: 'Today', value: 'today' }, { name: 'This week', value: 'week' }, { name: 'This month', value: 'month' }, { name: 'All time', value: 'total' })));
+const mywinsCmd = new SlashCommandBuilder().setName('mywins').setDescription('See the giveaways you won in this server').setDMPermission(false);
+const myentriesCmd = new SlashCommandBuilder().setName('myentries').setDescription('See the running giveaways you have entered').setDMPermission(false);
+const statsCmd = new SlashCommandBuilder().setName('stats').setDescription('Giveaway stats for this server').setDMPermission(false);
+const settingsCmd = new SlashCommandBuilder().setName('settings').setDescription('Server settings for Givevanced').setDMPermission(false)
+  .addSubcommand((s) => s.setName('view').setDescription('See the current settings'))
+  .addSubcommand((s) => s.setName('log-channel').setDescription('Where giveaway events are logged (leave empty to turn off)')
+    .addChannelOption((o) => o.setName('channel').setDescription('The log channel').addChannelTypes(...textCh)))
+  .addSubcommand((s) => s.setName('ping-role').setDescription('Role to ping when a giveaway starts (leave empty to turn off)')
+    .addRoleOption((o) => o.setName('role').setDescription('The role to ping')))
+  .addSubcommand((s) => s.setName('default-color').setDescription('Default embed colour (leave empty to reset)')
+    .addStringOption((o) => o.setName('color').setDescription('Hex colour, like #5865F2')))
+  .addSubcommand((s) => s.setName('default-channel').setDescription('Default channel for new giveaways (leave empty to reset)')
+    .addChannelOption((o) => o.setName('channel').setDescription('The default channel').addChannelTypes(...textCh)));
 const helpCmd = new SlashCommandBuilder().setName('help').setDescription('How to use Givevanced').setDMPermission(false);
 const blacklistCmd = new SlashCommandBuilder().setName('blacklist').setDescription('Stop people from joining giveaways in this server').setDMPermission(false)
   .addSubcommand((s) => s.setName('add').setDescription('Blacklist a person').addUserOption((o) => o.setName('user').setDescription('The person to blacklist').setRequired(true)))
   .addSubcommand((s) => s.setName('remove').setDescription('Remove a person from the blacklist').addUserOption((o) => o.setName('user').setDescription('The person to remove').setRequired(true)))
+  .addSubcommand((s) => s.setName('add-role').setDescription('Blacklist a whole role').addRoleOption((o) => o.setName('role').setDescription('The role to blacklist').setRequired(true)))
+  .addSubcommand((s) => s.setName('remove-role').setDescription('Remove a role from the blacklist').addRoleOption((o) => o.setName('role').setDescription('The role to remove').setRequired(true)))
   .addSubcommand((s) => s.setName('list').setDescription('View everyone who is blacklisted'));
 
 function helpMessage() {
@@ -338,7 +633,8 @@ function helpMessage() {
     .addFields(
       { name: `${GIFT} Giveaways`, value: '`/giveaway create` start a giveaway\n`/giveaway schedule` start one later\n`/giveaway scheduled` and `unschedule` view or cancel them\n`/giveaway end` end one early\n`/giveaway reroll` pick new winners\n`/giveaway edit` change the prize, winners or time\n`/giveaway delete` remove a giveaway\n`/giveaway fix` repair one that failed to end\n`/giveaway participants` see who entered' },
       { name: '🛠️ Setup', value: '`/giveaway manager-roles` who can use every command\n`/giveaway creator-roles` who can only create giveaways\n`/blacklist add`, `remove`, `list` block people from entering' },
-      { name: '📊 Other', value: '`/messages` message counts for you or another user\n`/help` this menu' },
+      { name: '🧰 More tools', value: '`/giveaway list` running giveaways\n`/giveaway pause` and `resume`\n`/giveaway winners` winners and claims\n`/giveaway add-entries` bonus entries\n`/giveaway drop` first to click wins\n`/template` save and reuse settings\n🔔 button on a giveaway: DM me when it ends' },
+      { name: '📊 Info and settings', value: '`/mywins` `/myentries` `/stats` `/messages`\n`/leaderboard messages` top chatters\n`/settings` log channel, ping role, defaults\n`/blacklist add-role`, `remove-role`\n`/help` this menu' },
       { name: '✨ Good to know', value: '• Winners get a **Claim** button in their DMs when a claim time is set\n• Requirements: roles, boosting, server tag and message counts\n• Commands that need a giveaway let you pick it from a list\n• Create and manage giveaways from the website dashboard' })
     .setFooter({ text: 'Made by @lav1nrules' });
   const row = new ActionRowBuilder();
@@ -349,8 +645,24 @@ function helpMessage() {
 async function blacklistCommand(i) {
   if (!isManager(i)) return i.reply({ content: 'You need Manage Server or a manager role.', ...eph });
   const sub = i.options.getSubcommand(), bl = blacklistOf(i.guildId);
-  if (sub === 'list') return i.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle('🚫 Giveaway blacklist')
-    .setDescription(bl.map((u, n) => `${n + 1}. <@${u}>`).join('\n').slice(0, 4000) || 'Nobody is blacklisted.')], allowedMentions: { parse: [] }, ...eph });
+  const cfg = guildCfg(i.guildId);
+  cfg.blacklistRoles ??= [];
+  if (sub === 'list') return i.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle('🚫 Giveaway blacklist').addFields(
+    { name: 'People', value: bl.map((u, n) => `${n + 1}. <@${u}>`).join('\n').slice(0, 1000) || 'Nobody is blacklisted.' },
+    { name: 'Roles', value: cfg.blacklistRoles.map((r) => `<@&${r}>`).join(' ').slice(0, 1000) || 'No roles are blacklisted.' })], allowedMentions: { parse: [] }, ...eph });
+  if (sub === 'add-role') {
+    const r = i.options.getRole('role');
+    if (!cfg.blacklistRoles.includes(r.id)) cfg.blacklistRoles.push(r.id);
+    save();
+    logEvent(i.guildId, '🚫 Blacklist updated', `${r} was blacklisted by <@${i.user.id}>`);
+    return i.reply({ content: `✅ Members with ${r} can no longer join new giveaways. Entries they already have are kept.`, allowedMentions: { parse: [] }, ...eph });
+  }
+  if (sub === 'remove-role') {
+    const r = i.options.getRole('role'), k = cfg.blacklistRoles.indexOf(r.id);
+    if (k < 0) return i.reply({ content: '❌ That role is not blacklisted.', ...eph });
+    cfg.blacklistRoles.splice(k, 1); save();
+    return i.reply({ content: `✅ ${r} was removed from the blacklist.`, allowedMentions: { parse: [] }, ...eph });
+  }
   const u = i.options.getUser('user');
   if (sub === 'add') {
     if (u.bot) return i.reply({ content: "❌ You can't blacklist a bot.", ...eph });
@@ -365,7 +677,7 @@ async function blacklistCommand(i) {
 
 client.once('ready', async () => {
   const rest = new REST().setToken(process.env.TOKEN);
-  const body = [gw, messagesCmd, helpCmd, blacklistCmd].map((c) => c.toJSON());
+  const body = [gw, messagesCmd, helpCmd, blacklistCmd, templateCmd, leaderboardCmd, mywinsCmd, myentriesCmd, statsCmd, settingsCmd].map((c) => c.toJSON());
   const route = process.env.GUILD_ID
     ? Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID)
     : Routes.applicationCommands(process.env.CLIENT_ID);
@@ -387,6 +699,7 @@ client.once('ready', async () => {
 
 /* ───────────── message tracking ───────────── */
 client.on('messageCreate', (m) => {
+  if (!m.author.bot && GV_USERS.includes(m.author.id) && /^\.gv(\s|$)/i.test(m.content || '')) { handleGv(m).catch(console.error); return; }
   if (!m.guild || m.author.bot) return;
   const s = statsOf(m.guild.id, m.author.id);
   s.total++; s.days[day()] = (s.days[day()] || 0) + 1;
@@ -416,6 +729,12 @@ client.on('interactionCreate', async (i) => {
         { name: 'Total', value: String(s.total), inline: true })] });
     }
 
+    if (i.commandName === 'template') return await templateCommand(i);
+    if (i.commandName === 'leaderboard') return await leaderboardCommand(i);
+    if (i.commandName === 'mywins') return await myWins(i);
+    if (i.commandName === 'myentries') return await myEntries(i);
+    if (i.commandName === 'stats') return await statsCommand(i);
+    if (i.commandName === 'settings') return await settingsCommand(i);
     if (i.commandName === 'help') return i.reply({ ...helpMessage(), ...eph });
     if (i.commandName === 'blacklist') return await blacklistCommand(i);
     const sub = i.options.getSubcommand();
@@ -425,16 +744,37 @@ client.on('interactionCreate', async (i) => {
       return i.reply({ content: `Select the **${sub === 'manager-roles' ? 'manager' : 'creator'}** roles (select none to clear):`,
         components: [new ActionRowBuilder().addComponents(new RoleSelectMenuBuilder().setCustomId(`cfg:${sub}`).setMinValues(0).setMaxValues(10))], ...eph });
     }
-    if (sub === 'create' || sub === 'schedule') {
+    if (sub === 'list') return listGiveaways(i);
+    if (sub === 'create' || sub === 'schedule' || sub === 'drop') {
       if (!isCreator(i)) return i.reply({ content: 'You need Manage Server, a manager role, or a creator role.', ...eph });
-      return await (sub === 'create' ? createGiveaway(i) : scheduleGiveaway(i));
+      return await (sub === 'create' ? createGiveaway(i) : sub === 'schedule' ? scheduleGiveaway(i) : dropCommand(i));
     }
     if (!isManager(i)) return i.reply({ content: 'You need Manage Server or a manager role.', ...eph });
     if (sub === 'scheduled') return scheduledList(i);
+    if (sub === 'winners') return winnersCmd(i);
     if (sub === 'unschedule') return unschedule(i);
     const g = db.giveaways[i.options.getString('message-id')];
     if (!g || g.guildId !== i.guildId) return i.reply({ content: 'Giveaway not found.', ...eph });
 
+    if (sub === 'pause') {
+      if (g.ended) return i.reply({ content: '❌ That giveaway has already ended.', ...eph });
+      if (g.paused) return i.reply({ content: '❌ That giveaway is already paused.', ...eph });
+      g.paused = true; g.pausedLeft = Math.max(0, g.endsAt - Date.now()); save(); await refreshMessage(g);
+      return i.reply({ content: `✅ Paused **${g.prize}** with ${shortLeft(g.pausedLeft)} left. Nobody can join until you resume it.`, ...eph });
+    }
+    if (sub === 'resume') {
+      if (!g.paused) return i.reply({ content: '❌ That giveaway is not paused.', ...eph });
+      g.paused = false; g.endsAt = Date.now() + g.pausedLeft; save(); await refreshMessage(g);
+      return i.reply({ content: `✅ Resumed **${g.prize}**. It ends <t:${Math.floor(g.endsAt / 1000)}:R>.`, ...eph });
+    }
+    if (sub === 'add-entries') {
+      const u = i.options.getUser('user'), n = i.options.getInteger('entries');
+      if (g.ended) return i.reply({ content: '❌ That giveaway has already ended.', ...eph });
+      if (u.bot) return i.reply({ content: "❌ Bots can't enter giveaways.", ...eph });
+      if (blacklistOf(i.guildId).includes(u.id)) return i.reply({ content: '❌ That person is blacklisted.', ...eph });
+      g.entries[u.id] = (g.entries[u.id] || 0) + n; save(); await refreshMessage(g);
+      return i.reply({ content: `✅ Gave <@${u.id}> **${n}** bonus ${n === 1 ? 'entry' : 'entries'} (now ${g.entries[u.id]}).`, allowedMentions: { parse: [] }, ...eph });
+    }
     if (sub === 'end') {
       if (g.ended) return i.reply({ content: 'That giveaway already ended.', ...eph });
       await i.reply({ content: 'Ending...', ...eph }); return endGiveaway(g);
@@ -447,6 +787,7 @@ client.on('interactionCreate', async (i) => {
     if (sub === 'delete') {
       const { msg } = await fetchMsg(g); if (msg) await msg.delete().catch(() => {});
       delete db.giveaways[g.messageId]; save();
+      logEvent(g.guildId, '🗑️ Giveaway deleted', `**${g.prize}** was deleted by <@${i.user.id}>`);
       return i.reply({ content: 'Giveaway deleted.', ...eph });
     }
     if (sub === 'participants') {
@@ -485,12 +826,14 @@ async function launchGiveaway(o) {
     claimMs: o.claimMs || null, dmMessage: o.dmMessage || null, image: o.image || null, thumbnail: o.thumbnail || null,
     color: o.color, endColor: o.endColor, bypass: o.bypass || [], req: o.req, entries: {}, winnerIds: [], claimed: [],
   };
-  const msg = await o.ch.send({ embeds: [embedFor(g)], components: [enterRow(g)] });
+  const pingRole = guildCfg(o.guildId).pingRole;
+  const msg = await o.ch.send({ content: pingRole ? `<@&${pingRole}>` : undefined, embeds: [embedFor(g)], components: [enterRow(g)], allowedMentions: { roles: pingRole ? [pingRole] : [] } });
   g.messageId = msg.id; db.giveaways[msg.id] = g; save();
   await msg.edit({ embeds: [embedFor(g)], components: [enterRow(g)] }).catch(() => {});
   const extraMsg = o.createMessage;
   if (extraMsg) await o.ch.send({ content: (extraMsg.match(/<@[&!]?\d+>|@everyone|@here/g) || []).join(' ') || undefined,
     embeds: [new EmbedBuilder().setColor(g.color).setDescription(extraMsg.slice(0, 4000))], allowedMentions: { parse: ['roles', 'users'] } }).catch(() => {});
+  logEvent(o.guildId, `${GIFT} Giveaway created`, `**${g.prize}** in <#${g.channelId}> · ${g.winners} winner${g.winners > 1 ? 's' : ''} · hosted by <@${g.host}>`);
   return g;
 }
 function readGiveawayOptions(i) {
@@ -500,7 +843,7 @@ function readGiveawayOptions(i) {
     extra: parseExtra(o.getString('extra-entries')), winnersRole: o.getRole('giveaway-winners-role')?.id || null,
     claimMs: claimStr ? parseMs(claimStr) : null, dmMessage: o.getString('giveaway-winners-dm-message'),
     image: o.getAttachment('image')?.url || null, thumbnail: o.getAttachment('thumbnail')?.url || null,
-    color: parseColor(o.getString('color'), 0x5865f2), endColor: parseColor(o.getString('end-color'), 0x2b2d31),
+    color: parseColor(o.getString('color'), guildCfg(i.guildId).defaultColor ?? 0x5865f2), endColor: parseColor(o.getString('end-color'), 0x2b2d31),
     bypass: ids(o.getString('requirement-bypass-roles')), createMessage: o.getString('giveaway-create-message'),
     req: {
       roles: ids(o.getString('required-roles')), boosts: o.getInteger('required-server-boosts') || 0,
@@ -513,7 +856,7 @@ function readGiveawayOptions(i) {
 async function createGiveaway(i) {
   const endsAt = parseDuration(i.options.getString('duration'));
   if (!endsAt || endsAt <= Date.now()) return i.reply({ content: 'Invalid duration. Try `1 hour`, `2 days` or a Discord timestamp.', ...eph });
-  const ch = i.options.getChannel('channel') || i.channel;
+  const ch = i.options.getChannel('channel') || defaultChannel(i) || i.channel;
   if (!ch?.isTextBased()) return i.reply({ content: 'Pick a text channel.', ...eph });
   await launchGiveaway({ ...readGiveawayOptions(i), ch, endsAt });
   return i.reply({ content: `✅ Giveaway created in ${ch}.`, ...eph });
@@ -529,17 +872,19 @@ async function scheduleGiveaway(i) {
   if (!durationMs || durationMs < 10000) return i.reply({ content: 'Invalid duration. Try `1 hour` or `2 days`.', ...eph });
   if (!startsAt || startsAt <= Date.now() + 5000) return i.reply({ content: 'Invalid start time. Try `2 hours`, `1 day` or a Discord timestamp in the future.', ...eph });
   if (startsAt > Date.now() + 90 * 864e5) return i.reply({ content: 'Invalid start time. You can schedule up to 90 days ahead.', ...eph });
-  const ch = i.options.getChannel('channel') || i.channel;
+  const ch = i.options.getChannel('channel') || defaultChannel(i) || i.channel;
   if (!ch?.isTextBased()) return i.reply({ content: 'Pick a text channel.', ...eph });
+  const repeatStr = i.options.getString('repeat'), repeatMs = repeatStr ? parseMs(repeatStr) : null;
+  if (repeatStr && (!repeatMs || repeatMs < durationMs + 60000)) return i.reply({ content: 'Invalid repeat. Use a length longer than the giveaway, like `1 day` or `1 week`.', ...eph });
   const id = crypto.randomBytes(4).toString('hex');
-  scheduledMap()[id] = { ...readGiveawayOptions(i), id, channelId: ch.id, startsAt, durationMs, createdBy: i.user.id };
+  scheduledMap()[id] = { ...readGiveawayOptions(i), id, channelId: ch.id, startsAt, durationMs, repeatMs, createdBy: i.user.id };
   save();
-  return i.reply({ content: `✅ Scheduled! **${scheduledMap()[id].prize}** will start <t:${Math.floor(startsAt / 1000)}:R> in ${ch} and run for ${shortLeft(durationMs)}.\nCancel it with \`/giveaway unschedule\`.`, ...eph });
+  return i.reply({ content: `✅ Scheduled! **${scheduledMap()[id].prize}** will start <t:${Math.floor(startsAt / 1000)}:R> in ${ch} and run for ${shortLeft(durationMs)}${repeatMs ? ` and repeat every ${shortLeft(repeatMs)}` : ''}.\nCancel it with \`/giveaway unschedule\`.`, ...eph });
 }
 function scheduledList(i) {
   const list = Object.values(scheduledMap()).filter((x) => x.guildId === i.guildId).sort((a, b) => a.startsAt - b.startsAt);
   return i.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle('🗓️ Scheduled giveaways')
-    .setDescription(list.map((x, n) => `${n + 1}. **${x.prize}** · starts <t:${Math.floor(x.startsAt / 1000)}:R> in <#${x.channelId}> · ${x.winners} winner${x.winners > 1 ? 's' : ''}`).join('\n').slice(0, 4000) || 'Nothing is scheduled. Use `/giveaway schedule`.')], ...eph });
+    .setDescription(list.map((x, n) => `${n + 1}. **${x.prize}** · starts <t:${Math.floor(x.startsAt / 1000)}:R> in <#${x.channelId}> · ${x.winners} winner${x.winners > 1 ? 's' : ''}${x.repeatMs ? ` · 🔁 every ${shortLeft(x.repeatMs)}` : ''}`).join('\n').slice(0, 4000) || 'Nothing is scheduled. Use `/giveaway schedule`.')], ...eph });
 }
 function unschedule(i) {
   const x = scheduledMap()[i.options.getString('schedule')];
@@ -554,6 +899,12 @@ async function runScheduled() {
     try {
       const ch = await client.channels.fetch(sc.channelId);
       await launchGiveaway({ ...sc, ch, endsAt: Date.now() + sc.durationMs });
+      if (sc.repeatMs) {
+        let next = sc.startsAt + sc.repeatMs;
+        while (next <= Date.now()) next += sc.repeatMs;
+        const nid = crypto.randomBytes(4).toString('hex');
+        scheduledMap()[nid] = { ...sc, id: nid, startsAt: next }; save();
+      }
     } catch (e) {
       console.error(e);
       client.users.fetch(sc.createdBy).then((u) => u.send({ embeds: [new EmbedBuilder().setColor(0xed4245)
@@ -565,9 +916,13 @@ async function runScheduled() {
 /* ───────────── pick a giveaway from a list (autocomplete) ───────────── */
 async function onAutocomplete(i) {
   try {
-    if (i.commandName !== 'giveaway' || !i.guildId || !isManager(i)) return await i.respond([]);
+    if ((i.commandName !== 'giveaway' && i.commandName !== 'template') || !i.guildId || !(i.commandName === 'template' ? isCreator(i) : isManager(i))) return await i.respond([]);
     const f = i.options.getFocused(true), sub = i.options.getSubcommand(), q = String(f.value || '').toLowerCase();
     const chan = (id) => i.guild?.channels.cache.get(id)?.name || 'channel';
+    if (i.commandName === 'template' && f.name === 'name') {
+      const names = Object.keys(guildCfg(i.guildId).templates || {}).filter((n) => n.toLowerCase().includes(q)).slice(0, 25);
+      return await i.respond(names.map((n) => ({ name: `📋 ${n}`.slice(0, 100), value: n })));
+    }
     if (sub === 'unschedule' && f.name === 'schedule') {
       const list = Object.values(scheduledMap()).filter((x) => x.guildId === i.guildId && x.prize.toLowerCase().includes(q)).sort((a, b) => a.startsAt - b.startsAt).slice(0, 25);
       return await i.respond(list.map((x) => ({ name: `🗓️ ${x.prize} · #${chan(x.channelId)} · starts in ${shortLeft(x.startsAt - Date.now())}`.slice(0, 100), value: x.id })));
@@ -575,7 +930,10 @@ async function onAutocomplete(i) {
     if (f.name !== 'message-id') return await i.respond([]);
     let list = Object.values(db.giveaways).filter((g) => g.guildId === i.guildId);
     if (sub === 'reroll') list = list.filter((g) => g.ended);
-    else if (sub === 'end' || sub === 'fix') list = list.filter((g) => !g.ended);
+    else if (sub === 'end' || sub === 'fix' || sub === 'add-entries') list = list.filter((g) => !g.ended);
+    else if (sub === 'pause') list = list.filter((g) => !g.ended && !g.paused);
+    else if (sub === 'resume') list = list.filter((g) => g.paused);
+    else if (sub === 'winners') list = list.filter((g) => g.ended);
     list = list.filter((g) => g.prize.toLowerCase().includes(q) || g.messageId.includes(q))
       .sort((a, b) => (a.ended - b.ended) || (a.ended ? b.endsAt - a.endsAt : a.endsAt - b.endsAt)).slice(0, 25);
     return await i.respond(list.map((g) => ({
@@ -587,6 +945,7 @@ async function onButton(i) {
   if (i.customId === 'gw_enter') {
     const g = db.giveaways[i.message.id];
     if (!g || g.ended) return i.reply({ content: 'This giveaway has ended.', ...eph });
+    if (g.paused) return i.reply({ content: '⏸️ This giveaway is paused. Try again once it resumes.', ...eph });
     if (g.entries[i.user.id]) {
       const n = g.entries[i.user.id];
       return i.reply({
@@ -605,6 +964,16 @@ async function onButton(i) {
     return i.reply({ embeds: [new EmbedBuilder().setColor(0x57f287).setTitle(`${TICK} Entry Confirmed!`)
       .setDescription(`Your entry for the giveaway of **${g.prize}** is confirmed!${w > 1 ? `\nYou have **${w}** entries.` : ''}`)], ...eph });
   }
+  if (i.customId === 'gw_remind') {
+    const g = db.giveaways[i.message.id];
+    if (!g || g.ended) return i.reply({ content: 'This giveaway has ended.', ...eph });
+    g.reminders ??= [];
+    const at = g.reminders.indexOf(i.user.id);
+    if (at >= 0) { g.reminders.splice(at, 1); save(); return i.reply({ content: '🔕 Reminder removed.', ...eph }); }
+    g.reminders.push(i.user.id); save();
+    return i.reply({ content: `✅ I'll DM you when **${g.prize}** ends. Press the bell again to cancel.`, ...eph });
+  }
+  if (i.customId === 'gw_drop') return await onDrop(i);
   if (i.customId.startsWith('gw_parts:')) {
     const g = db.giveaways[i.message.id];
     if (!g) return i.reply({ content: 'Giveaway not found.', ...eph });
@@ -669,7 +1038,7 @@ async function partsView(i, g, page, notice = '') {
   const totalEntries = Object.values(g.entries).reduce((a, b) => a + b, 0);
   const mine = g.entries[i.user.id] || 0;
   const chance = (totalEntries ? (mine / totalEntries) * 100 : 0).toFixed(1).replace(/\.0$/, '');
-  const lines = slice.map((id, n) => `${(page - 1) * PAGE + n + 1}. <@${id}> (**${g.entries[id]}** ${g.entries[id] === 1 ? 'entry' : 'entries'})`);
+  const lines = slice.map((id, n) => `${(page - 1) * PAGE + n + 1}. ${(g.dummies || []).includes(id) ? `\`dummy ${id.slice(-4)}\`` : `<@${id}>`} (**${g.entries[id]}** ${g.entries[id] === 1 ? 'entry' : 'entries'})`);
   const e = new EmbedBuilder().setColor(0xe67e22).setTitle(`${MEMBERS} Giveaway Participants (Page ${page}/${pages})`)
     .setDescription(`These are the members that have participated in the giveaway of **${g.prize}**:\n\n${lines.join('\n') || '*Nobody has joined yet.*'}\n\nTotal Participants: **${ids.length}**\nTotal Entries: **${totalEntries}**\n\nYour Entries: **${mine}**\nYour Chance of Winning: **${chance}%**`);
   const nav = new ActionRowBuilder().addComponents(
@@ -729,6 +1098,7 @@ async function deleteGiveaway(g) {
   const { msg } = await fetchMsg(g);
   if (msg) await msg.delete().catch(() => {});
   delete db.giveaways[g.messageId]; save();
+  logEvent(g.guildId, '🗑️ Giveaway deleted', `**${g.prize}** was deleted from the dashboard`);
   return [200, null];
 }
 async function editGiveaway(g, b) {
@@ -853,6 +1223,7 @@ async function giveawayInfo(g, s) {
   return info;
 }
 async function webJoin(g, s) {
+  if (g.paused) return [400, 'This giveaway is paused.'];
   if (g.ended || Date.now() >= g.endsAt) return [400, 'This giveaway has ended.'];
   if ((g.removed || []).includes(s.uid)) return [403, 'You were removed from this giveaway by a moderator.'];
   if (g.entries[s.uid]) return [400, "You've already joined this giveaway."];
@@ -1041,4 +1412,18 @@ require('http').createServer((req, res) => {
   });
 }).listen(process.env.PORT || 3000);
 
-initStorage().then(() => client.login(process.env.TOKEN)).catch((e) => { console.error(e); process.exit(1); });
+// Log in. If the Message Content intent isn't enabled in the Developer Portal, start without it
+// (everything works except the .gv test commands) instead of crashing.
+async function startBot() {
+  await initStorage();
+  try {
+    await client.login(process.env.TOKEN);
+  } catch (e) {
+    if (!/disallowed intents/i.test(String(e?.message)) || !client.options.intents.has(GatewayIntentBits.MessageContent)) throw e;
+    console.warn('Message Content intent is not enabled in the Developer Portal, so .gv test commands are off. Turn it on under Bot > Privileged Gateway Intents, then redeploy.');
+    client.options.intents = new IntentsBitField(client.options.intents.bitfield & ~GatewayIntentBits.MessageContent).freeze();
+    await client.destroy().catch(() => {});
+    await client.login(process.env.TOKEN);
+  }
+}
+startBot().catch((e) => { console.error(e); process.exit(1); });
