@@ -142,18 +142,18 @@ footer .wrap{align-items:center}.legal{flex-basis:100%;font-size:12px;opacity:.8
 </div>
 <div class="wrap"><div class="stats">
   <div class="stat"><b>9</b><span>giveaway subcommands</span></div>
-  <div class="stat"><b>9</b><span>entry requirements</span></div>
+  <div class="stat"><b>10</b><span>entry requirements</span></div>
   <div class="stat"><b>DMs</b><span>for prize claims</span></div>
   <div class="stat"><b>24/7</b><span>automatic ending</span></div>
 </div></div></header>
-<div class="marq" aria-hidden="true"><div class="mt" id="mt"><span>Role requirements</span><span>Server boosters</span><span>Server tag</span><span>Daily messages</span><span>Weekly messages</span><span>Monthly messages</span><span>Total messages</span><span>Extra entries</span><span>Bypass roles</span><span>DM claims</span><span>Auto reroll</span></div></div>
+<div class="marq" aria-hidden="true"><div class="mt" id="mt"><span>Role requirements</span><span>Server boosters</span><span>Server tag</span><span>Join a server</span><span>Daily messages</span><span>Weekly messages</span><span>Monthly messages</span><span>Total messages</span><span>Extra entries</span><span>Bypass roles</span><span>DM claims</span><span>Auto reroll</span></div></div>
 
 <section class="sec" id="features"><div class="wrap">
   <span class="eyebrow">Features</span>
   <h2>Everything a giveaway needs, <span>nothing it doesn't.</span></h2>
   <p class="sub">Set it up in one command. Givevanced handles entries, winners, claims and cleanup.</p>
   <div class="feat">
-    <div class="f"><div class="ic">🔒</div><h3>Entry requirements</h3><p>Require roles, server boosting, the server tag, or daily, weekly, monthly and total message counts. Add bypass roles for staff.</p></div>
+    <div class="f"><div class="ic">🔒</div><h3>Entry requirements</h3><p>Require roles, server boosting, the server tag, joining a partner server, or daily, weekly, monthly and total message counts. Add bypass roles for staff.</p></div>
     <div class="f"><div class="ic">⚖️</div><h3>Extra entries</h3><p>Give boosters, supporters or any role more chances to win with weighted entries, like <i>@Booster 5</i>.</p></div>
     <div class="f"><div class="ic">📬</div><h3>DM claims</h3><p>Winners are pinged in the channel and get a Claim button in their DMs. If their DMs are closed, the button appears in the channel.</p></div>
     <div class="f"><div class="ic">🔁</div><h3>Auto reroll</h3><p>Set a claim time. Winners who don't claim in time are replaced automatically, and the giveaway shows who has claimed.</p></div>
@@ -186,7 +186,7 @@ footer .wrap{align-items:center}.legal{flex-basis:100%;font-size:12px;opacity:.8
   <details><summary>Who can create giveaways?</summary><p>Anyone with Manage Server, a manager role, or a creator role. Set the roles with /giveaway manager-roles and /giveaway creator-roles.</p></details>
   <details><summary>Is there a website dashboard?</summary><p>Yes. Log in with Discord on the Dashboard to join giveaways, and if you manage a server you can create, edit, end, reroll and delete giveaways, see and remove participants, clone past giveaways, set manager and creator roles and view stats. Every giveaway embed also has a Website button that opens its page.</p></details>
   <details><summary>Can I pause a giveaway or reuse my settings?</summary><p>Yes. /giveaway pause freezes the timer and stops new entries until you /giveaway resume. /template save keeps a giveaway's settings under a name, and /template use starts a new one from it. You can also start a quick drop where the first people to click win, and members can press the bell on a giveaway to get a DM when it ends.</p></details>
-  <details><summary>Can I see what the bot does in my server?</summary><p>Yes. Use /settings log-channel to pick a channel and Givevanced will post when giveaways start, winners are announced, and the blacklist changes. /settings also lets you set a role to ping and a default colour.</p></details>
+  <details><summary>Can a giveaway require joining another server?</summary><p>Yes. Use the required-server option on /giveaway create (or pick it in the dashboard). Givevanced has to be in both servers. When someone clicks Enter, they're shown the server with a Join button, and once they've joined they can enter. If they leave that server later, they're removed from the giveaway, and anyone who left before the draw can't win.</p></details>
   <details><summary>Can I schedule a giveaway for later?</summary><p>Yes. Use /giveaway schedule with a start time like 2 hours or 1 day, plus the usual options. It starts by itself, and you can see or cancel scheduled ones with /giveaway scheduled and /giveaway unschedule. Commands that need a giveaway let you pick it from a list, so there's no need to copy message IDs.</p></details>
   <details><summary>Can I block someone from giveaways?</summary><p>Yes. Use /blacklist add to stop a person from joining any giveaway in your server. They're removed from live giveaways straight away. You can also manage the blacklist from the Dashboard, and use /blacklist remove or /blacklist list.</p></details>
   <details><summary>Can I leave a giveaway after joining?</summary><p>Yes. Click Enter again and the bot privately tells you that you already joined, with a button to leave.</p></details>
@@ -207,7 +207,7 @@ footer .wrap{align-items:center}.legal{flex-basis:100%;font-size:12px;opacity:.8
 <script>
 const CLIENT_ID='1558890733002297436';
 const ok=/^\d+$/.test(CLIENT_ID);
-const url='https://discord.com/oauth2/authorize?client_id='+CLIENT_ID+'&permissions=268520448&scope=bot%20applications.commands';
+const url='https://discord.com/oauth2/authorize?client_id='+CLIENT_ID+'&permissions=268520449&scope=bot%20applications.commands';
 const toast=m=>{const t=document.getElementById('toast');t.textContent=m;t.classList.add('on');setTimeout(()=>t.classList.remove('on'),2200)};
 document.querySelectorAll('.invite').forEach(a=>{if(ok){a.href=url;a.target='_blank';a.rel='noopener'}else a.addEventListener('click',e=>{e.preventDefault();toast('Invite link works once CLIENT_ID is set')})});
 document.getElementById('yr').textContent=new Date().getFullYear();
@@ -215,8 +215,8 @@ const data={
  'Giveaways':[['/giveaway create','Start a giveaway with requirements and extras'],['/giveaway schedule','Schedule a giveaway to start later (or repeat)'],['/giveaway drop','First to click wins, no timer needed'],['/giveaway list','See every running giveaway'],['/giveaway end','End a giveaway early'],['/giveaway reroll','Pick new winners for an ended giveaway'],['/giveaway winners','See winners and who claimed'],['/giveaway participants','See everyone who entered']],
  'Manage':[['/giveaway edit','Change the prize, winners or end time'],['/giveaway pause','Freeze a giveaway and stop entries'],['/giveaway resume','Carry on where it stopped'],['/giveaway add-entries','Give someone bonus entries'],['/giveaway scheduled','See giveaways waiting to start'],['/giveaway unschedule','Cancel a scheduled giveaway'],['/giveaway delete','Remove a giveaway'],['/giveaway fix','Repair a giveaway that failed to end']],
  'Templates':[['/template save','Save a giveaway\'s settings under a name'],['/template use','Start a giveaway from a template'],['/template list','See your saved templates'],['/template delete','Delete a template']],
- 'Moderation':[['/blacklist add','Stop a person from joining giveaways'],['/blacklist add-role','Block a whole role from joining'],['/blacklist remove','Let a blacklisted person join again'],['/blacklist remove-role','Unblock a role'],['/blacklist list','See everyone who is blacklisted']],
- 'Setup':[['/settings view','See your server settings'],['/settings log-channel','Log giveaway events to a channel'],['/settings ping-role','Ping a role when giveaways start'],['/settings default-color','Set the default embed colour'],['/giveaway manager-roles','Roles that can use every command'],['/giveaway creator-roles','Roles that can only create giveaways']],
+ 'Moderation':[['/blacklist add','Stop a person from joining giveaways'],['/blacklist remove','Let a blacklisted person join again'],['/blacklist list','See everyone who is blacklisted']],
+ 'Setup':[['/giveaway manager-roles','Roles that can use every command'],['/giveaway creator-roles','Roles that can only create giveaways']],
  'Members':[['/mywins','See the giveaways you won'],['/myentries','See the giveaways you are in'],['/leaderboard messages','Top chatters in the server'],['/messages','View message counts'],['/stats','Giveaway stats for the server'],['/help','Show every command']]
 };
 
