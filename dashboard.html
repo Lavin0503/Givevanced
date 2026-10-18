@@ -115,6 +115,7 @@ async function detail(id,me){
   else if(!me.user)act=me.loginReady?`<a class="btn dc" href="${loginUrl()}">Login with Discord to join</a>`:`<p class="msg bad">Login isn't set up yet.</p>`;
   else if(m.entered)act=`<div class="msg ok">${TICK} You're in${m.entries>1?` with ${m.entries} entries`:''}!</div><button class="btn bad" id="leave">Leave giveaway</button>`;
   else if(m.removed)act=`<div class="msg bad">You were removed from this giveaway by a moderator.</div>`;
+  else if(m.needServer)act=`<div class="msg"><b>${esc(m.needServer.name)}</b>: join this server and you will be entered automatically. Keep this page open.</div><a class="btn dc" href="${esc(m.needServer.invite)}" target="_blank" rel="noopener">Join server</a>`;
   else if(m.canJoin)act=`<button class="btn main" id="join">${CONE} Join giveaway</button>`;
   else act=`<div class="msg bad">${esc(m.reason)}</div><button class="btn" disabled>Can't join</button>`;
   const win=g.ended?`<h2>Winners</h2><div class="card">${g.winnerNames.length?g.winnerNames.map(n=>`<div class="t" style="font-size:16px">🏆 ${esc(n)}</div>`).join(''):'<span class="muted">No valid entries.</span>'}</div>`:'';
@@ -134,7 +135,7 @@ async function detail(id,me){
   </div>${win}`;
   const go=async p=>{document.querySelectorAll('#act .btn').forEach(b=>b.disabled=true);const x=await post('/api/giveaway/'+id+'/'+p);
     if(x.ok)return detail(id,me);document.getElementById('note').innerHTML=`<div class="msg bad">${esc(x.d.error||'Something went wrong.')}</div>`;document.querySelectorAll('#act .btn').forEach(b=>b.disabled=false)};
-  const j=document.getElementById('join'),l=document.getElementById('leave');if(j)j.onclick=()=>go('join');if(l)l.onclick=()=>go('leave');
+  const j=document.getElementById('join'),l=document.getElementById('leave');if(j)j.onclick=()=>go('join');if(l)l.onclick=()=>go('leave');clearInterval(window.__poll);if(m&&m.needServer)window.__poll=setInterval(async()=>{const r=await api('/api/giveaway/'+id);if(r.ok&&r.d.me&&(r.d.me.canJoin||r.d.me.entered)){clearInterval(window.__poll);if(!r.d.me.entered)await post('/api/giveaway/'+id+'/join');detail(id,me)}},4000);
 }
 
 /* ---------- server manager ---------- */
@@ -199,6 +200,7 @@ function tabCreate(t){
   <h3 class="sec">Requirements</h3>
   <div class="f2"><div class="f"><label>Required roles (hold Ctrl/Cmd to pick several)</label><select id="f_req" multiple>${roleOpts()}</select></div><div class="f"><label>Bypass roles</label><select id="f_bypass" multiple>${roleOpts()}</select></div></div>
   <div class="f2"><label class="chk"><input type="checkbox" id="f_boost"> Must be boosting the server</label><label class="chk"><input type="checkbox" id="f_tag"> Must have the server tag equipped</label></div>
+  <div class="f2" style="margin-top:14px"><div class="f"><label>Required server (members must join it to enter)</label><select id="f_server"><option value="">None</option>${(SV.joinable||[]).map(x=>`<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select><div class="hint">You and Givevanced must both be in that server.</div></div><div class="f"><label>Invite link (optional)</label><input id="f_invite" placeholder="https://discord.gg/..."><div class="hint">Only needed if I can't create an invite there.</div></div></div>
   <div class="f4" style="margin-top:14px"><div class="f"><label>Messages today</label><input id="f_daily" type="number" min="0" value="0"></div><div class="f"><label>This week</label><input id="f_weekly" type="number" min="0" value="0"></div><div class="f"><label>This month</label><input id="f_monthly" type="number" min="0" value="0"></div><div class="f"><label>Total</label><input id="f_total" type="number" min="0" value="0"></div></div>
   <h3 class="sec">Extra entries</h3><div id="xrows"></div><button type="button" class="btn sm" id="addx">+ Add role</button>
   <h3 class="sec">Winners</h3>
@@ -215,7 +217,7 @@ function tabCreate(t){
     const x=await post('/api/server/'+SID+'/giveaway',{prize:val('f_prize'),duration:val('f_duration'),winners:val('f_winners'),channelId:val('f_channel'),requiredRoles:sel('f_req'),bypass:sel('f_bypass'),
       boosts:document.getElementById('f_boost').checked,serverTag:document.getElementById('f_tag').checked,daily:val('f_daily'),weekly:val('f_weekly'),monthly:val('f_monthly'),total:val('f_total'),
       extra:[...document.querySelectorAll('.xrow')].map(r=>({role:r.querySelector('.xr').value,entries:r.querySelector('.xn').value})),
-      claimTime:val('f_claim'),winnersRole:val('f_wrole'),dmMessage:val('f_dm'),createMessage:val('f_cmsg'),color:val('f_color'),endColor:val('f_ecolor'),image:val('f_image'),thumbnail:val('f_thumb')});
+      requiredServer:val('f_server'),serverInvite:val('f_invite'),claimTime:val('f_claim'),winnersRole:val('f_wrole'),dmMessage:val('f_dm'),createMessage:val('f_cmsg'),color:val('f_color'),endColor:val('f_ecolor'),image:val('f_image'),thumbnail:val('f_thumb')});
     e.target.disabled=false;
     if(x.ok){curTab='Giveaways';await server(SID,ME);flash(`✅ Giveaway created! <a href="/giveaway/${x.d.id}" style="text-decoration:underline">View it</a>`,true)}
     else flash(esc(x.d.error||'Something went wrong.'),false);
@@ -227,7 +229,7 @@ async function clone(id){
   const set=(i,v)=>{document.getElementById(i).value=v??''},ms=(i,arr)=>[...document.getElementById(i).options].forEach(o=>o.selected=(arr||[]).includes(o.value));
   set('f_prize',c.prize);set('f_winners',c.winners);if(SV.channels.some(x=>x.id===c.channelId))set('f_channel',c.channelId);
   ms('f_req',c.req.roles);ms('f_bypass',c.bypass);document.getElementById('f_boost').checked=!!c.req.boosts;document.getElementById('f_tag').checked=!!c.req.serverTag;
-  set('f_daily',c.req.daily);set('f_weekly',c.req.weekly);set('f_monthly',c.req.monthly);set('f_total',c.req.total);
+  set('f_daily',c.req.daily);if(c.req.server&&[...document.getElementById('f_server').options].some(o=>o.value===c.req.server.id))set('f_server',c.req.server.id);set('f_weekly',c.req.weekly);set('f_monthly',c.req.monthly);set('f_total',c.req.total);
   c.extra.forEach(e=>addXRow(e.role,e.entries));set('f_claim',c.claimTime);set('f_wrole',c.winnersRole);set('f_dm',c.dmMessage);set('f_color',c.color);set('f_ecolor',c.endColor);set('f_image',c.image);set('f_thumb',c.thumbnail);
   flash('Settings copied. Enter a new duration and create it.',true);document.getElementById('f_duration').focus();
 }
