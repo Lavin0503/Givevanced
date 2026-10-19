@@ -10,6 +10,14 @@ const TICK_ID = '1559999432597180516', CROSS_ID = '1559999451513487529';
 const TICK = `<:tick:${TICK_ID}>`, CROSS = `<:cross:${CROSS_ID}>`;
 const CONE_ID = '1560018755701186610', GIFT_ID = '1560018740362608721', MEMBERS_ID = '1560018723794845846';
 const CONE = `<:cone:${CONE_ID}>`, GIFT = `<:gift:${GIFT_ID}>`, MEMBERS = `<:members:${MEMBERS_ID}>`;
+const BELL_ID = '1561462986911125614';
+const EM = {   // custom emojis uploaded to the bot
+  template: '<:template:1561831636348178503>', trophy: '<:trophy:1561831637472510062>', chat: '<:chat:1561831638730543194>', repeat: '<:repeat:1561831640765046784>',
+  hourglass: '<:hourglass:1561831642400690337>', no: '<:no:1561831644304900208>', pause: '<:pause:1561831646158655519>', mail: '<:mail:1561831647786172548>',
+  medal1: '<:medal1:1561831649744785528>', medal2: '<:medal2:1561831651712176249>', medal3: '<:medal3:1561831660960354366>', flag: '<:flag:1561831653117267998>',
+  crown: '<:crown:1561831654509776976>', bellOff: '<:belloff:1561831655860342924>', lock: '<:lock:1561831657424822333>', chart: '<:chart:1561831659249205318>',
+  calendar: '<:calendar:1561831662873219102>', wrench: '<:wrench:1561831664370450592>',
+};
 const WEB_ID = '1560217018312032277', WEB = `<:website:${WEB_ID}>`;
 const withEmoji = (t) => String(t).replace(/✅/g, TICK).replace(/❌/g, CROSS);
 const BASE = (process.env.RENDER_EXTERNAL_URL || process.env.BASE_URL || '').replace(/\/$/, '');
@@ -115,8 +123,8 @@ function embedFor(g, ended = false) {
     .setTitle(g.prize)
     .setColor(ended ? g.endColor : g.color)
     .setDescription([
-      g.paused ? `**Status:** ⏸️ Paused (${shortLeft(g.pausedLeft)} left)` : `**Ends:** <t:${Math.floor(g.endsAt / 1000)}:R> (<t:${Math.floor(g.endsAt / 1000)}:f>)`,
-      `**Hosted by:** <@${g.host}>`,
+      ended ? `${EM.flag} **Ended** <t:${Math.floor(g.endsAt / 1000)}:R>` : g.paused ? (g.pausedReason === 'server' && g.req?.server ? `**Status:** ${EM.pause} Paused until I'm added back to **${g.req.server.name}**` : `**Status:** ${EM.pause} Paused (${shortLeft(g.pausedLeft)} left)`) : `**Ends:** <t:${Math.floor(g.endsAt / 1000)}:R> (<t:${Math.floor(g.endsAt / 1000)}:f>)`,
+      `${EM.crown} **Hosted by:** <@${g.host}>`,
       `**Winners:** ${g.winners}`,
       `**Entries:** ${Object.keys(g.entries).length}`,
       BASE && g.messageId ? `${WEB} [View on the website](${BASE}/giveaway/${g.messageId})` : '',
@@ -140,13 +148,13 @@ function reqText(g) {
   if (r.total) l.push(`${r.total}+ total messages`);
   if (g.extra && Object.keys(g.extra).length)
     l.push('Extra entries: ' + Object.entries(g.extra).map(([id, n]) => `<@&${id}> ×${n}`).join(', '));
-  return l.length ? `\n**Requirements**\n${l.map((x) => `• ${x}`).join('\n')}` : '';
+  return l.length ? `\n${EM.lock} **Requirements**\n${l.map((x) => `• ${x}`).join('\n')}` : '';
 }
 const enterRow = (g, disabled = false) => {
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('gw_enter').setLabel(String(Object.keys(g.entries).length)).setEmoji({ id: CONE_ID }).setStyle(ButtonStyle.Primary).setDisabled(disabled),
     new ButtonBuilder().setCustomId(`gw_parts:${g.messageId}`).setLabel('Participants').setEmoji({ id: MEMBERS_ID }).setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId('gw_remind').setEmoji('🔔').setStyle(ButtonStyle.Secondary).setDisabled(disabled));
+    new ButtonBuilder().setCustomId('gw_remind').setEmoji({ id: BELL_ID }).setStyle(ButtonStyle.Secondary).setDisabled(disabled));
   return row;
 };
 
@@ -187,14 +195,14 @@ async function announce(g, ch, winners) {
     const custom = g.dmMessage ? fill(g.dmMessage) : '';
     if (g.claimMs) {
       // Claim button is sent to the winner's DMs
-      const e = new EmbedBuilder().setColor(g.color).setTitle(`${CONE} You won!`)
-        .setDescription(`You won **${g.prize}** in **${guild?.name ?? 'a server'}**!\nClick **Claim** <t:${Math.floor(g.claimDeadline / 1000)}:R> or you'll be rerolled.${custom ? `\n\n${custom}` : ''}\n\n[Jump to giveaway](${link})`);
+      const e = new EmbedBuilder().setColor(g.color).setTitle(`${EM.trophy} You won!`)
+        .setDescription(`You won **${g.prize}** in **${guild?.name ?? 'a server'}**!\n${EM.hourglass} Click **Claim** <t:${Math.floor(g.claimDeadline / 1000)}:R> or you'll be rerolled.${custom ? `\n\n${custom}` : ''}\n\n[Jump to giveaway](${link})`);
       try {
         const u = await client.users.fetch(w);
         await u.send({ embeds: [e], components: [claimRow(g)] });
       } catch { failed.push(w); }
     } else if (custom) {
-      const e = new EmbedBuilder().setColor(g.color).setTitle(`${CONE} You won!`).setDescription(`${custom}\n\n[Jump to giveaway](${link})`);
+      const e = new EmbedBuilder().setColor(g.color).setTitle(`${EM.trophy} You won!`).setDescription(`${custom}\n\n[Jump to giveaway](${link})`);
       client.users.fetch(w).then((u) => u.send({ embeds: [e], components: [linkRow(g)] })).catch(() => {});
     }
   }
@@ -203,7 +211,7 @@ async function announce(g, ch, winners) {
     : `No valid entries for **${g.prize}**, so no winner was chosen.`;
   const payload = { allowedMentions: { users: winners } };
   if (g.claimMs && winners.length) {
-    if (failed.length < winners.length) desc += `\n📬 Check your DMs to claim within <t:${Math.floor(g.claimDeadline / 1000)}:R>.`;
+    if (failed.length < winners.length) desc += `\n${EM.mail} Check your DMs to claim within <t:${Math.floor(g.claimDeadline / 1000)}:R>.`;
     if (failed.length) {
       desc += `\n${failed.map((w) => `<@${w}>`).join(', ')}: your DMs are closed, so claim here within <t:${Math.floor(g.claimDeadline / 1000)}:R>.`;
       payload.components = [claimRow(g)];
@@ -211,7 +219,7 @@ async function announce(g, ch, winners) {
   }
   if (!payload.components) payload.components = [linkRow(g)];
   if (winners.length) payload.content = winners.map((w) => `<@${w}>`).join(' ');   // ping
-  payload.embeds = [new EmbedBuilder().setColor(winners.length ? 0x57f287 : 0xed4245).setTitle(`${CONE} Giveaway ended`).setDescription(desc)];
+  payload.embeds = [new EmbedBuilder().setColor(winners.length ? 0x57f287 : 0xed4245).setTitle(`${EM.trophy} Giveaway ended`).setDescription(desc)];
   await ch.send(payload).catch(() => {});
 }
 async function endGiveaway(g) {
@@ -240,11 +248,13 @@ async function rerollUnclaimed(g) {
 setInterval(async () => {
   for (const g of Object.values(db.giveaways)) {
     try {
+      if (client.isReady() && !client.guilds.cache.has(g.guildId)) continue;
       if (!g.ended && !g.paused && g.endsAt <= Date.now()) await endGiveaway(g);
       else if (g.ended && g.claimDeadline && g.claimDeadline <= Date.now()) await rerollUnclaimed(g);
     } catch (e) { console.error(e); }
   }
   await runScheduled();
+  await checkRequiredServers().catch((e) => console.error(e));
   await sweepServerRequirements().catch((e) => console.error(e));
   await checkPending().catch((e) => console.error(e));
 }, 5000);
@@ -363,7 +373,7 @@ const dropOver = (d) => d.claimed.length >= d.winners;
 const dropEmbed = (d) => new EmbedBuilder().setColor(dropOver(d) ? 0x2b2d31 : 0xffb340).setTitle(`${CONE} Drop: ${d.prize}`)
   .setDescription(dropOver(d)
     ? `Drop over! Winner${d.winners > 1 ? 's' : ''}: ${d.claimed.map((u) => `<@${u}>`).join(', ')}`
-    : `First **${d.winners}** to click **Claim** win${d.winners > 1 ? '' : 's'}!${d.claimed.length ? `\nClaimed so far: ${d.claimed.map((u) => `<@${u}>`).join(', ')}` : ''}\nHosted by <@${d.host}>`)
+    : `First **${d.winners}** to click **Claim** win${d.winners > 1 ? '' : 's'}!${d.claimed.length ? `\nClaimed so far: ${d.claimed.map((u) => `<@${u}>`).join(', ')}` : ''}\n${EM.crown} Hosted by <@${d.host}>`)
   .setFooter({ text: dropOver(d) ? 'Drop over' : `${d.winners - d.claimed.length} left` });
 const dropRow = (d) => new ActionRowBuilder().addComponents(
   new ButtonBuilder().setCustomId('gw_drop').setLabel('Claim').setEmoji({ id: GIFT_ID }).setStyle(ButtonStyle.Success).setDisabled(dropOver(d)));
@@ -399,7 +409,7 @@ async function dropCommand(i) {
 function listGiveaways(i) {
   const live = Object.values(db.giveaways).filter((g) => g.guildId === i.guildId && !g.ended).sort((a, b) => a.endsAt - b.endsAt).slice(0, 15);
   return i.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle(`${CONE} Running giveaways`)
-    .setDescription(live.map((g) => `${g.paused ? '⏸️' : '•'} **${g.prize}** · <#${g.channelId}> · ${g.paused ? 'paused' : `ends <t:${Math.floor(g.endsAt / 1000)}:R>`} · ${Object.keys(g.entries).length} entries · [jump](${gLink(g)})`).join('\n').slice(0, 4000)
+    .setDescription(live.map((g) => `${g.paused ? EM.pause : '•'} **${g.prize}** · <#${g.channelId}> · ${g.paused ? 'paused' : `ends <t:${Math.floor(g.endsAt / 1000)}:R>`} · ${Object.keys(g.entries).length} entries · [jump](${gLink(g)})`).join('\n').slice(0, 4000)
       || 'No giveaways are running right now.')], allowedMentions: { parse: [] } });
 }
 async function winnersCmd(i) {
@@ -408,12 +418,12 @@ async function winnersCmd(i) {
     const g = db.giveaways[id];
     if (!g || g.guildId !== i.guildId) return i.reply({ content: 'Giveaway not found.', ...eph });
     if (!g.ended) return i.reply({ content: '❌ That giveaway has not ended yet.', ...eph });
-    const lines = g.winnerIds.map((w) => `• <@${w}> ${(g.claimed || []).includes(w) ? `${TICK} claimed` : g.claimMs ? '⏳ not claimed' : ''}`);
-    return i.reply({ embeds: [new EmbedBuilder().setColor(g.endColor).setTitle(`${CONE} Winners: ${g.prize}`).setDescription(lines.join('\n') || 'No valid entries.')
+    const lines = g.winnerIds.map((w) => `• <@${w}> ${(g.claimed || []).includes(w) ? `${TICK} claimed` : g.claimMs ? `${EM.hourglass} not claimed` : ''}`);
+    return i.reply({ embeds: [new EmbedBuilder().setColor(g.endColor).setTitle(`${EM.trophy} Winners: ${g.prize}`).setDescription(lines.join('\n') || 'No valid entries.')
       .addFields({ name: 'Entries', value: String(Object.keys(g.entries).length), inline: true }, { name: 'Ended', value: `<t:${Math.floor(g.endsAt / 1000)}:R>`, inline: true })], allowedMentions: { parse: [] }, ...eph });
   }
   const recent = Object.values(db.giveaways).filter((g) => g.guildId === i.guildId && g.ended).sort((a, b) => b.endsAt - a.endsAt).slice(0, 10);
-  return i.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle(`${CONE} Recent winners`)
+  return i.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle(`${EM.trophy} Recent winners`)
     .setDescription(recent.map((g) => `**${g.prize}**: ${g.winnerIds.length ? g.winnerIds.map((w) => `<@${w}>`).join(', ') : 'no winners'} · <t:${Math.floor(g.endsAt / 1000)}:d>`).join('\n').slice(0, 4000) || 'No giveaways have ended yet.')],
     allowedMentions: { parse: [] }, ...eph });
 }
@@ -421,9 +431,9 @@ async function myWins(i) {
   const won = Object.values(db.giveaways).filter((g) => g.guildId === i.guildId && g.ended && g.winnerIds.includes(i.user.id)).sort((a, b) => b.endsAt - a.endsAt);
   const drops = Object.values(db.drops || {}).filter((d) => d.guildId === i.guildId && d.claimed.includes(i.user.id));
   const lines = [
-    ...won.map((g) => `• **${g.prize}** · <t:${Math.floor(g.endsAt / 1000)}:d> · ${g.claimMs ? ((g.claimed || []).includes(i.user.id) ? `${TICK} claimed` : '⏳ not claimed') : 'won'} · [jump](${gLink(g)})`),
+    ...won.map((g) => `• **${g.prize}** · <t:${Math.floor(g.endsAt / 1000)}:d> · ${g.claimMs ? ((g.claimed || []).includes(i.user.id) ? `${TICK} claimed` : `${EM.hourglass} not claimed`) : 'won'} · [jump](${gLink(g)})`),
     ...drops.map((d) => `• **${d.prize}** (drop) · [jump](https://discord.com/channels/${d.guildId}/${d.channelId}/${d.messageId})`)];
-  return i.reply({ embeds: [new EmbedBuilder().setColor(0xffb340).setTitle(`${CONE} Your wins`).setDescription(lines.slice(0, 15).join('\n').slice(0, 4000) || "You haven't won a giveaway here yet. Good luck!")], ...eph });
+  return i.reply({ embeds: [new EmbedBuilder().setColor(0xffb340).setTitle(`${EM.trophy} Your wins`).setDescription(lines.slice(0, 15).join('\n').slice(0, 4000) || "You haven't won a giveaway here yet. Good luck!")], ...eph });
 }
 async function myEntries(i) {
   const mine = Object.values(db.giveaways).filter((g) => g.guildId === i.guildId && !g.ended && g.entries[i.user.id]).sort((a, b) => a.endsAt - b.endsAt);
@@ -436,14 +446,14 @@ async function leaderboardCommand(i) {
   const days = { today: 1, week: weekDays(), month: monthDays() }[period];
   const rows = Object.entries(db.stats[i.guildId] || {}).map(([id, st]) => [id, days ? countSince(st, days) : st.total]).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]).slice(0, 10);
   const label = { today: 'Today', week: 'This week', month: 'This month', total: 'All time' }[period];
-  const medal = ['🥇', '🥈', '🥉'];
-  return i.reply({ embeds: [new EmbedBuilder().setColor(0xffb340).setTitle(`💬 Top chatters: ${label}`)
+  const medal = [EM.medal1, EM.medal2, EM.medal3];
+  return i.reply({ embeds: [new EmbedBuilder().setColor(0xffb340).setTitle(`${EM.chat} Top chatters: ${label}`)
     .setDescription(rows.map(([id, n], k) => `${medal[k] || `**${k + 1}.**`} <@${id}> · ${n} message${n === 1 ? '' : 's'}`).join('\n') || 'No messages counted yet.')], allowedMentions: { parse: [] } });
 }
 async function statsCommand(i) {
   const all = Object.values(db.giveaways).filter((g) => g.guildId === i.guildId), live = all.filter((g) => !g.ended);
   const drops = Object.values(db.drops || {}).filter((d) => d.guildId === i.guildId), cfg = guildCfg(i.guildId);
-  return i.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle(`${CONE} Giveaway stats`).addFields(
+  return i.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle(`${EM.chart} Giveaway stats`).addFields(
     { name: 'Hosted', value: String(all.length), inline: true }, { name: 'Running', value: String(live.length), inline: true }, { name: 'Ended', value: String(all.length - live.length), inline: true },
     { name: 'Entries in running giveaways', value: String(live.reduce((n, g) => n + Object.keys(g.entries).length, 0)), inline: true },
     { name: 'Winners picked', value: String(all.reduce((n, g) => n + g.winnerIds.length, 0)), inline: true }, { name: 'Drops', value: String(drops.length), inline: true },
@@ -458,7 +468,7 @@ async function templateCommand(i) {
   if (sub === 'save' || sub === 'delete') { if (!isManager(i)) return i.reply({ content: 'You need Manage Server or a manager role.', ...eph }); }
   else if (!isCreator(i)) return i.reply({ content: 'You need Manage Server, a manager role, or a creator role.', ...eph });
   if (sub === 'list') {
-    return i.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle('📋 Templates')
+    return i.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle(`${EM.template} Templates`)
       .setDescription(Object.entries(tpls).map(([n, t]) => `• **${n}**: ${t.prize} · ${t.winners} winner${t.winners > 1 ? 's' : ''}`).join('\n').slice(0, 4000) || 'No templates yet. Use `/template save`.')], ...eph });
   }
   const name = i.options.getString('name').trim().slice(0, 32);
@@ -575,7 +585,7 @@ async function resolveRequiredServer(hostGuildId, userId, input) {
     invite = await makeInvite(guild);
     if (!invite) return { error: "I couldn't create an invite there (I need the Create Invite permission). Paste an invite link instead." };
   }
-  return { id: guild.id, name: guild.name, invite };
+  return { id: guild.id, name: guild.name, invite, icon: guild.iconURL({ size: 256, extension: 'png' }) };
 }
 // { ok: true } | { ok: false, guild, unverifiable }
 async function serverStatus(g, uid) {
@@ -639,6 +649,41 @@ async function pickWinnersChecked(g, count, exclude = []) {
   return out;
 }
 
+// If I get removed from a required server I can't check anyone, so the giveaway pauses until I'm added back
+const addBotUrl = (gid) => `https://discord.com/oauth2/authorize?client_id=${process.env.CLIENT_ID}&permissions=268520449&scope=bot%20applications.commands${gid ? `&guild_id=${gid}&disable_guild_select=true` : ''}`;
+async function pauseForServer(g) {
+  if (g.ended || g.paused) return;
+  g.paused = true; g.pausedReason = 'server'; g.pausedLeft = Math.max(0, g.endsAt - Date.now()); save();
+  await refreshMessage(g);
+  const rs = g.req.server;
+  const e = new EmbedBuilder().setColor(0xed4245).setTitle(`${CROSS} Giveaway paused`)
+    .setDescription(`I was removed from **${rs.name}**, which **${g.prize}** requires, so I can no longer check who joined.\nThe giveaway is **paused** and keeps its remaining time. Add me back to **${rs.name}** and it carries on automatically.`);
+  if (rs.icon) e.setThumbnail(rs.icon);
+  const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel(`Add me to ${rs.name}`.slice(0, 80)).setStyle(ButtonStyle.Link).setURL(addBotUrl(rs.id)), linkBtn(g));
+  const { ch } = await fetchMsg(g);
+  if (ch) await ch.send({ embeds: [e], components: [row] }).catch(() => {});
+  client.users.fetch(g.host).then((u) => u.send({ embeds: [e], components: [row] })).catch(() => {});
+}
+async function resumeForServer(g) {
+  if (g.ended || !g.paused || g.pausedReason !== 'server') return;
+  g.paused = false; g.pausedReason = null; g.endsAt = Date.now() + (g.pausedLeft || 0); save();
+  await refreshMessage(g);
+  const e = new EmbedBuilder().setColor(0x57f287).setTitle(`${TICK} Giveaway resumed`)
+    .setDescription(`I'm back in **${g.req.server.name}**, so **${g.prize}** is running again. It ends <t:${Math.floor(g.endsAt / 1000)}:R>.`);
+  const { ch } = await fetchMsg(g);
+  if (ch) await ch.send({ embeds: [e], components: [linkRow(g)] }).catch(() => {});
+}
+async function checkRequiredServers() {
+  if (!client.isReady()) return;
+  for (const g of Object.values(db.giveaways)) {
+    const id = g.req?.server?.id;
+    if (!id || g.ended) continue;
+    const here = client.guilds.cache.has(id);
+    if (!here && !g.paused) await pauseForServer(g);
+    else if (here && g.paused && g.pausedReason === 'server') await resumeForServer(g);
+  }
+}
+
 // People who pressed Enter but are not in the required server yet: we enter them the moment they join
 const pendingUi = new Map();   // "giveawayId:userId" -> the interaction whose private message we edit
 async function autoConfirm(g, uid) {
@@ -660,7 +705,8 @@ async function autoConfirm(g, uid) {
   if (fail) return say(red(fail));
   g.entries[uid] = weightForMember(m, g); save(); refreshMessage(g);
   const w = g.entries[uid];
-  return say(new EmbedBuilder().setColor(0x57f287).setTitle(`${TICK} Entry Confirmed!`)
+  const okIcon = client.guilds.cache.get(g.req.server.id)?.iconURL({ size: 256, extension: 'png' }) || g.req.server.icon;
+  return say(new EmbedBuilder().setColor(0x57f287).setTitle(`${TICK} Entry Confirmed!`).setThumbnail(okIcon || null)
     .setDescription(`You joined **${g.req.server.name}** and your entry for **${g.prize}** is confirmed!${w > 1 ? `\nYou have **${w}** entries.` : ''}\nStay in the server or you'll be removed.`));
 }
 async function onServerJoin(gid, uid) {
@@ -683,7 +729,7 @@ async function checkPending() {
 // the whole "click Enter" flow, shared by the Enter and "I've joined" buttons
 async function tryEnter(i, g, respond) {
   if (!g || g.ended) return respond({ content: 'This giveaway has ended.' });
-  if (g.paused) return respond({ content: '⏸️ This giveaway is paused. Try again once it resumes.' });
+  if (g.paused) return respond({ content: g.pausedReason === 'server' && g.req?.server ? `${EM.pause} This giveaway is paused until I'm added back to **${g.req.server.name}**. Try again once it resumes.` : `${EM.pause} This giveaway is paused. Try again once it resumes.` });
   const uid = i.user.id;
   if (g.entries[uid]) {
     const n = g.entries[uid];
@@ -702,7 +748,8 @@ async function tryEnter(i, g, respond) {
       pendingUi.set(`${g.messageId}:${uid}`, i);
       const e = new EmbedBuilder().setColor(0x5865f2).setTitle(`${MEMBERS} Join ${rs.name} to enter`)
         .setDescription(`To enter **${g.prize}** you need to be a member of **${rs.name}**.\nJoin the server with the button below. **I'll enter you automatically as soon as you join.**\nIf you leave the server later, you'll be removed from the giveaway.`);
-      const icon = st.guild?.iconURL(); if (icon) e.setThumbnail(icon);
+      const icon = st.guild?.iconURL({ size: 256, extension: 'png' }) || rs.icon;
+      if (icon) e.setThumbnail(icon).setAuthor({ name: rs.name, iconURL: icon });
       return respond({ embeds: [e], components: [new ActionRowBuilder().addComponents(
         new ButtonBuilder().setLabel('Join server').setEmoji({ id: MEMBERS_ID }).setStyle(ButtonStyle.Link).setURL(rs.invite))] });
     }
@@ -822,9 +869,9 @@ function helpMessage() {
     .setDescription(`The free, advanced giveaway bot. Click the ${CONE} button on a giveaway to enter, and click it again to leave.\n**Pick a command from the menus below to see exactly how to use it.**`)
     .addFields(
       { name: `${GIFT} Giveaways`, value: '`/giveaway create` start a giveaway\n`/giveaway schedule` start one later\n`/giveaway scheduled` and `unschedule` view or cancel them\n`/giveaway end` end one early\n`/giveaway reroll` pick new winners\n`/giveaway edit` change the prize, winners or time\n`/giveaway delete` remove a giveaway\n`/giveaway fix` repair one that failed to end\n`/giveaway participants` see who entered' },
-      { name: '🛠️ Setup', value: '`/giveaway manager-roles` who can use every command\n`/giveaway creator-roles` who can only create giveaways' },
+      { name: `${EM.wrench} Setup`, value: '`/giveaway manager-roles` who can use every command\n`/giveaway creator-roles` who can only create giveaways' },
       { name: '🧰 More tools', value: '`/giveaway list` running giveaways\n`/giveaway pause` and `resume`\n`/giveaway winners` winners and claims\n`/giveaway add-entries` bonus entries\n`/giveaway drop` first to click wins\n`/template` save and reuse settings\n🔔 button on a giveaway: DM me when it ends' },
-      { name: '📊 Info', value: '`/mywins` `/myentries` `/stats` `/messages`\n`/leaderboard messages` top chatters\n`/blacklist add`, `remove`, `list`\n`/help` this menu' },
+      { name: `${EM.chart} Info`, value: '`/mywins` `/myentries` `/stats` `/messages`\n`/leaderboard messages` top chatters\n`/blacklist add`, `remove`, `list`\n`/help` this menu' },
       { name: '✨ Good to know', value: '• Winners get a **Claim** button in their DMs when a claim time is set\n• Requirements: roles, boosting, server tag, message counts, or joining another server\n• Commands that need a giveaway let you pick it from a list\n• Create and manage giveaways from the website dashboard' })
     .setFooter({ text: 'Made by @lav1nrules' });
   return { embeds: [e], components: [...helpRows(), helpLinkRow(false)] };
@@ -832,7 +879,7 @@ function helpMessage() {
 async function blacklistCommand(i) {
   if (!isManager(i)) return i.reply({ content: 'You need Manage Server or a manager role.', ...eph });
   const sub = i.options.getSubcommand(), bl = blacklistOf(i.guildId);
-  if (sub === 'list') return i.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle('🚫 Giveaway blacklist')
+  if (sub === 'list') return i.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle(`${EM.no} Giveaway blacklist`)
     .setDescription(bl.map((u, n) => `${n + 1}. <@${u}>`).join('\n').slice(0, 4000) || 'Nobody is blacklisted.')], allowedMentions: { parse: [] }, ...eph });
   const u = i.options.getUser('user');
   if (sub === 'add') {
@@ -846,6 +893,8 @@ async function blacklistCommand(i) {
   return i.reply({ content: `✅ <@${u.id}> was removed from the blacklist.`, allowedMentions: { parse: [] }, ...eph });
 }
 
+client.on('guildDelete', (gd) => { if (gd.available !== false) checkRequiredServers().catch(console.error); });
+client.on('guildCreate', () => { checkRequiredServers().catch(console.error); });
 client.on('guildMemberAdd', (m) => { onServerJoin(m.guild.id, m.id).catch(console.error); });
 client.on('guildMemberRemove', (m) => { onServerLeave(m.guild.id, m.id).catch(console.error); });
 
@@ -932,12 +981,13 @@ client.on('interactionCreate', async (i) => {
     if (sub === 'pause') {
       if (g.ended) return i.reply({ content: '❌ That giveaway has already ended.', ...eph });
       if (g.paused) return i.reply({ content: '❌ That giveaway is already paused.', ...eph });
-      g.paused = true; g.pausedLeft = Math.max(0, g.endsAt - Date.now()); save(); await refreshMessage(g);
+      g.paused = true; g.pausedReason = 'manual'; g.pausedLeft = Math.max(0, g.endsAt - Date.now()); save(); await refreshMessage(g);
       return i.reply({ content: `✅ Paused **${g.prize}** with ${shortLeft(g.pausedLeft)} left. Nobody can join until you resume it.`, ...eph });
     }
     if (sub === 'resume') {
       if (!g.paused) return i.reply({ content: '❌ That giveaway is not paused.', ...eph });
-      g.paused = false; g.endsAt = Date.now() + g.pausedLeft; save(); await refreshMessage(g);
+      if (g.pausedReason === 'server' && g.req?.server && !client.guilds.cache.has(g.req.server.id)) return i.reply({ content: `❌ I'm not in **${g.req.server.name}** right now. Add me back there and this giveaway resumes by itself.`, ...eph });
+      g.paused = false; g.pausedReason = null; g.endsAt = Date.now() + g.pausedLeft; save(); await refreshMessage(g);
       return i.reply({ content: `✅ Resumed **${g.prize}**. It ends <t:${Math.floor(g.endsAt / 1000)}:R>.`, ...eph });
     }
     if (sub === 'add-entries') {
@@ -1061,8 +1111,8 @@ async function scheduleGiveaway(i) {
 }
 function scheduledList(i) {
   const list = Object.values(scheduledMap()).filter((x) => x.guildId === i.guildId).sort((a, b) => a.startsAt - b.startsAt);
-  return i.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle('🗓️ Scheduled giveaways')
-    .setDescription(list.map((x, n) => `${n + 1}. **${x.prize}** · starts <t:${Math.floor(x.startsAt / 1000)}:R> in <#${x.channelId}> · ${x.winners} winner${x.winners > 1 ? 's' : ''}${x.repeatMs ? ` · 🔁 every ${shortLeft(x.repeatMs)}` : ''}`).join('\n').slice(0, 4000) || 'Nothing is scheduled. Use `/giveaway schedule`.')], ...eph });
+  return i.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle(`${EM.calendar} Scheduled giveaways`)
+    .setDescription(list.map((x, n) => `${n + 1}. **${x.prize}** · starts <t:${Math.floor(x.startsAt / 1000)}:R> in <#${x.channelId}> · ${x.winners} winner${x.winners > 1 ? 's' : ''}${x.repeatMs ? ` · ${EM.repeat} every ${shortLeft(x.repeatMs)}` : ''}`).join('\n').slice(0, 4000) || 'Nothing is scheduled. Use `/giveaway schedule`.')], ...eph });
 }
 function unschedule(i) {
   const x = scheduledMap()[i.options.getString('schedule')];
@@ -1133,7 +1183,7 @@ async function onButton(i) {
     if (!g || g.ended) return i.reply({ content: 'This giveaway has ended.', ...eph });
     g.reminders ??= [];
     const at = g.reminders.indexOf(i.user.id);
-    if (at >= 0) { g.reminders.splice(at, 1); save(); return i.reply({ content: '🔕 Reminder removed.', ...eph }); }
+    if (at >= 0) { g.reminders.splice(at, 1); save(); return i.reply({ content: `${EM.bellOff} Reminder removed.`, ...eph }); }
     g.reminders.push(i.user.id); save();
     return i.reply({ content: `✅ I'll DM you when **${g.prize}** ends. Press the bell again to cancel.`, ...eph });
   }
