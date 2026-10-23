@@ -20,7 +20,8 @@ const EM = {   // custom emojis uploaded to the bot
 };
 const WEB_ID = '1560217018312032277', WEB = `<:website:${WEB_ID}>`;
 const withEmoji = (t) => String(t).replace(/✅/g, TICK).replace(/❌/g, CROSS);
-const BASE = (process.env.RENDER_EXTERNAL_URL || process.env.BASE_URL || '').replace(/\/$/, '');
+// Your own domain (BASE_URL) wins; otherwise Render's automatic address is used
+const BASE = (process.env.BASE_URL || process.env.RENDER_EXTERNAL_URL || '').trim().replace(/\/+$/, '');
 
 // Turns plain-text interaction replies into embeds (mentions that must ping are sent separately as content)
 const RED = /^(❌|⚠️|invalid|you need|you are not|not allowed|giveaway not found|something went wrong|only managers|that giveaway|this giveaway has ended|pick a text|please enter|the claim time|you already|you were removed)/i;
@@ -232,6 +233,8 @@ async function endGiveaway(g) {
   if (msg) await msg.edit({ embeds: [embedFor(g, true)], components: [enterRow(g, true)] }).catch(() => {});
   if (ch) await announce(g, ch, g.winnerIds);
   notifyReminders(g);
+  if (ch && g.endMessage) await sendEndMessage(g, ch);
+  if (g.dmHost) dmHostEnded(g);
 }
 async function rerollUnclaimed(g) {
   const lost = g.winnerIds.filter((w) => !g.claimed.includes(w));
@@ -302,7 +305,7 @@ const addGiveawayOptions = (s, afterRequired) => {
     .addChannelOption((o) => o.setName('channel').setDescription('The channel this giveaway will be created in'))
     .addUserOption((o) => o.setName('host').setDescription('The host of this giveaway'))
     .addStringOption((o) => o.setName('extra-entries').setDescription('Extra entries for roles, e.g. "@role1 5, @role2 10"'))
-    .addStringOption((o) => o.setName('giveaway-create-message').setDescription('The message the bot sends after creating this giveaway'))
+    .addStringOption((o) => o.setName('giveaway-start-message').setDescription('The message the bot sends when this giveaway starts'))
     .addRoleOption((o) => o.setName('giveaway-winners-role').setDescription('The role the bot gives to the winners'))
     .addStringOption((o) => o.setName('claim-time').setDescription('How long winners have to click Claim before being rerolled, e.g. "24 hours"'))
     .addStringOption((o) => o.setName('giveaway-winners-dm-message').setDescription('DM sent to winners. Use {prize} and {server}'))
@@ -320,7 +323,9 @@ const addGiveawayOptions = (s, afterRequired) => {
     .addStringOption((o) => o.setName('color').setDescription('Embed hex color, e.g. #5865F2'))
     .addStringOption((o) => o.setName('end-color').setDescription('Embed hex color after the giveaway ends'));
 };
-gw.addSubcommand((s) => addGiveawayOptions(s.setName('create').setDescription('Create a giveaway')));
+gw.addSubcommand((s) => addGiveawayOptions(s.setName('create').setDescription('Create a giveaway'))
+  .addStringOption((o) => o.setName('giveaway-end-message').setDescription('The message the bot sends when this giveaway ends ({prize} and {winners} work)'))
+  .addBooleanOption((o) => o.setName('dm-host').setDescription('DM the host when this giveaway ends')));
 gw.addSubcommand((s) => addGiveawayOptions(s.setName('schedule').setDescription('Schedule a giveaway to start later'),
   (r) => r.addStringOption((o) => o.setName('start').setDescription('When it starts, like 2 hours or 1 day, or a Discord timestamp').setRequired(true))
     .addStringOption((o) => o.setName('repeat').setDescription('Repeat every, like 1 day or 1 week (cancel with /giveaway unschedule)'))));
@@ -333,7 +338,9 @@ gw.addSubcommand((s) => idOpt(s.setName('delete').setDescription('Delete a givea
 gw.addSubcommand((s) => idOpt(s.setName('edit').setDescription('Edit a giveaway'), 'Giveaway message ID')
   .addStringOption((o) => o.setName('prize').setDescription('New prize'))
   .addIntegerOption((o) => o.setName('winners').setDescription('New winner count').setMinValue(1).setMaxValue(50))
-  .addStringOption((o) => o.setName('duration').setDescription('New duration from now, or a Discord timestamp')));
+  .addStringOption((o) => o.setName('duration').setDescription('New duration from now, or a Discord timestamp'))
+  .addStringOption((o) => o.setName('giveaway-end-message').setDescription('New end message (type none to remove it)'))
+  .addBooleanOption((o) => o.setName('dm-host').setDescription('DM the host when it ends (true or false)')));
 gw.addSubcommand((s) => idOpt(s.setName('end').setDescription('End a giveaway with the giveaway message ID'), 'Giveaway message ID'));
 gw.addSubcommand((s) => idOpt(s.setName('fix').setDescription('Fix a giveaway if it fails to end'), 'Giveaway message ID'));
 gw.addSubcommand((s) => s.setName('manager-roles').setDescription('Set roles with which people can use every command in the bot'));
@@ -342,6 +349,8 @@ gw.addSubcommand((s) => idOpt(s.setName('reroll').setDescription('Reroll the win
 gw.addSubcommand((s) => s.setName('list').setDescription('See every running giveaway in this server'));
 gw.addSubcommand((s) => idOpt(s.setName('pause').setDescription('Pause a running giveaway'), 'Pick the giveaway to pause'));
 gw.addSubcommand((s) => idOpt(s.setName('resume').setDescription('Resume a paused giveaway'), 'Pick the giveaway to resume'));
+gw.addSubcommand((s) => idOpt(s.setName('extend').setDescription('Add more time to a running giveaway'), 'Pick the giveaway to extend')
+  .addStringOption((o) => o.setName('time').setDescription('How much time to add, like 30 minutes, 2 hours or 1 day').setRequired(true)));
 gw.addSubcommand((s) => s.setName('winners').setDescription('See the winners of a giveaway, or recent winners')
   .addStringOption((o) => o.setName('message-id').setDescription('Pick a giveaway (leave empty for recent winners)').setAutocomplete(true)));
 gw.addSubcommand((s) => idOpt(s.setName('add-entries').setDescription('Give someone bonus entries'), 'Pick the giveaway')
@@ -366,6 +375,22 @@ async function notifyReminders(g) {
     client.users.fetch(u).then((x) => x.send({ embeds: [e], components: [linkRow(g)] })).catch(() => {});
     await new Promise((r) => setTimeout(r, 120));
   }
+}
+
+/* ───────────── end message and "DM the host" ───────────── */
+async function sendEndMessage(g, ch) {
+  const winners = (g.winnerIds || []).map((w) => `<@${w}>`).join(', ') || 'nobody';
+  const text = g.endMessage.replaceAll('{prize}', g.prize).replaceAll('{winners}', winners)
+    .replaceAll('{entries}', String(Object.keys(g.entries).length)).replaceAll('{host}', `<@${g.host}>`);
+  const pings = (g.endMessage.match(/<@[&!]?\d+>|@everyone|@here/g) || []).join(' ');   // only pings the host typed themselves
+  await ch.send({ content: pings || undefined, embeds: [new EmbedBuilder().setColor(g.endColor).setDescription(text.slice(0, 4000))], allowedMentions: { parse: ['roles', 'users'] } }).catch(() => {});
+}
+function dmHostEnded(g) {
+  const e = new EmbedBuilder().setColor(g.endColor).setTitle(`${EM.flag} Your giveaway ended`).setDescription(`**${g.prize}** has ended.`).addFields(
+    { name: 'Winners', value: g.winnerIds.length ? g.winnerIds.map((w) => `<@${w}>`).join(', ') : 'No valid entries' },
+    { name: 'Entries', value: String(Object.keys(g.entries).length), inline: true },
+    { name: 'Claims', value: g.claimMs ? `${(g.claimed || []).length}/${g.winnerIds.length} claimed so far` : 'No claim needed', inline: true });
+  client.users.fetch(g.host).then((u) => u.send({ embeds: [e], components: [linkRow(g)] })).catch(() => {});
 }
 
 /* ───────────── drops: first to click wins ───────────── */
@@ -482,7 +507,7 @@ async function templateCommand(i) {
     if (!g || g.guildId !== i.guildId) return i.reply({ content: 'Giveaway not found.', ...eph });
     if (!tpls[name] && Object.keys(tpls).length >= 25) return i.reply({ content: '❌ You can have up to 25 templates.', ...eph });
     tpls[name] = JSON.parse(JSON.stringify({ prize: g.prize, winners: g.winners, extra: g.extra, winnersRole: g.winnersRole, claimMs: g.claimMs, dmMessage: g.dmMessage,
-      image: g.image, thumbnail: g.thumbnail, color: g.color, endColor: g.endColor, bypass: g.bypass, req: g.req }));
+      image: g.image, thumbnail: g.thumbnail, color: g.color, endColor: g.endColor, bypass: g.bypass, req: g.req, endMessage: g.endMessage, dmHost: g.dmHost }));
     save();
     return i.reply({ content: `✅ Saved the template **${name}**. Use it with \`/template use\`.`, ...eph });
   }
@@ -797,7 +822,7 @@ const HELP_CMDS = [
     usage: '/giveaway create duration:<time> winners:<number> prize:<text> [options]',
     opts: [['duration', 'how long it lasts: `1 hour`, `2 days` or a Discord timestamp (required)'], ['winners', 'how many people win (required)'], ['prize', 'what is being given away (required)'],
       ['channel', 'where to post it (default: this channel)'], ['host', 'who is hosting (default: you)'], ['extra-entries', 'bonus entries for roles, like `@Booster 5, @VIP 3`'],
-      ['giveaway-create-message', 'an extra message posted after it starts'], ['giveaway-winners-role', 'role given to every winner'], ['claim-time', 'how long winners have to press Claim, like `24 hours`'],
+      ['giveaway-start-message', 'an extra message posted when it starts'], ['giveaway-end-message', 'a message posted when it ends (`{prize}`, `{winners}`, `{entries}` and `{host}` work)'], ['dm-host', 'DM the host a summary when it ends'], ['giveaway-winners-role', 'role given to every winner'], ['claim-time', 'how long winners have to press Claim, like `24 hours`'],
       ['giveaway-winners-dm-message', 'DM sent to winners (`{prize}` and `{server}` work)'], ['image / thumbnail', 'pictures for the giveaway embed'],
       ['required-roles', 'roles needed to enter (mention them, separate with commas)'], ['required-server-boosts', 'entrant must be boosting this server'], ['require-server-tag', "entrant must have this server's tag equipped"],
       ['required-daily / weekly / monthly / total-messages', 'minimum message counts'], ['required-server', 'members must join another server first (the bot must be in both). They are entered automatically once they join, and removed if they leave'],
@@ -805,7 +830,7 @@ const HELP_CMDS = [
     example: '/giveaway create duration:1 day winners:2 prize:Discord Nitro required-roles:@Member', notes: 'Members click the party button to enter and click it again to leave.' },
   { id: 'giveaway schedule', desc: 'Start a giveaway at a later time', who: WHO.create,
     usage: '/giveaway schedule duration:<time> winners:<number> prize:<text> start:<when> [repeat:<every>] [options]',
-    opts: [['start', 'when it begins: `2 hours`, `1 day` or a Discord timestamp, up to 90 days ahead (required)'], ['repeat', 'run it again every `1 day`, `1 week` and so on (must be longer than the duration)'], ['duration', 'how long it runs once started (a length, not a timestamp)'], ['everything else', 'all the options of /giveaway create work here too']],
+    opts: [['start', 'when it begins: `2 hours`, `1 day` or a Discord timestamp, up to 90 days ahead (required)'], ['repeat', 'run it again every `1 day`, `1 week` and so on (must be longer than the duration)'], ['duration', 'how long it runs once started (a length, not a timestamp)'], ['everything else', 'all the options of /giveaway create work here too, except giveaway-end-message and dm-host (set those afterwards with /giveaway edit)']],
     example: '/giveaway schedule duration:1 day winners:1 prize:Nitro start:2 hours repeat:1 week', notes: 'Cancel it with /giveaway unschedule. Pictures you attach can expire before a start that is far away.' },
   { id: 'giveaway scheduled', desc: 'See giveaways waiting to start', who: WHO.mgr, usage: '/giveaway scheduled', opts: [], example: '/giveaway scheduled', notes: 'Shows the start time, channel and repeat for each one.' },
   { id: 'giveaway unschedule', desc: 'Cancel a scheduled giveaway', who: WHO.mgr, usage: '/giveaway unschedule schedule:<pick>', opts: [['schedule', 'pick the scheduled giveaway from the list. For a repeating one this stops the whole series']], example: '/giveaway unschedule schedule:Nitro', notes: '' },
@@ -818,9 +843,11 @@ const HELP_CMDS = [
   { id: 'giveaway winners', desc: 'See winners and who claimed', who: WHO.mgr, usage: '/giveaway winners [message-id:<pick>]', opts: [['message-id', 'pick an ended giveaway to see its winners and claims. Leave it empty to see the last 10 giveaways and their winners']], example: '/giveaway winners', notes: '' },
   { id: 'giveaway participants', desc: 'See everyone who entered', who: WHO.mgr, usage: '/giveaway participants message-id:<pick>', opts: [['message-id', PICK]], example: '/giveaway participants message-id:Nitro', notes: 'The Participants button on a giveaway shows the same list, with paging and a Remove button for managers.' },
   { id: 'giveaway edit', desc: 'Change a giveaway', who: WHO.mgr, usage: '/giveaway edit message-id:<pick> [prize:<text>] [winners:<number>] [duration:<time>]',
-    opts: [['message-id', PICK], ['prize', 'a new prize'], ['winners', 'a new winner count'], ['duration', 'a new end time counted from now (running giveaways only)']], example: '/giveaway edit message-id:Nitro duration:3 hours', notes: 'Leave out anything you do not want to change.' },
+    opts: [['message-id', PICK], ['prize', 'a new prize'], ['winners', 'a new winner count'], ['duration', 'a new end time counted from now (running giveaways only)'], ['giveaway-end-message', 'a new end message, or `none` to remove it'], ['dm-host', 'turn the DM to the host on or off']], example: '/giveaway edit message-id:Nitro duration:3 hours', notes: 'Leave out anything you do not want to change.' },
   { id: 'giveaway pause', desc: 'Freeze a running giveaway', who: WHO.mgr, usage: '/giveaway pause message-id:<pick>', opts: [['message-id', PICK + ' Only running giveaways are listed.']], example: '/giveaway pause message-id:Nitro', notes: 'The timer stops and nobody can join until you resume it. The time left is kept.' },
   { id: 'giveaway resume', desc: 'Carry on a paused giveaway', who: WHO.mgr, usage: '/giveaway resume message-id:<pick>', opts: [['message-id', PICK + ' Only paused giveaways are listed.']], example: '/giveaway resume message-id:Nitro', notes: 'It ends after the time that was left when you paused it.' },
+  { id: 'giveaway extend', desc: 'Add more time to a running giveaway', who: WHO.mgr, usage: '/giveaway extend message-id:<pick> time:<amount>',
+    opts: [['message-id', PICK + ' Only running giveaways are listed.'], ['time', 'how much to add: `30 minutes`, `2 hours`, `1 day` (up to 60 days at once)']], example: '/giveaway extend message-id:Nitro time:2 hours', notes: 'A paused giveaway keeps the extra time for when it resumes.' },
   { id: 'giveaway add-entries', desc: 'Give someone bonus entries', who: WHO.mgr, usage: '/giveaway add-entries message-id:<pick> user:<@user> entries:<1-100>', opts: [['message-id', PICK], ['user', 'who gets the entries'], ['entries', 'how many to add, 1 to 100']], example: '/giveaway add-entries message-id:Nitro user:@Sam entries:5', notes: 'This adds to what they already have. Bots and blacklisted people are blocked.' },
   { id: 'giveaway delete', desc: 'Delete a giveaway and its message', who: WHO.mgr, usage: '/giveaway delete message-id:<pick>', opts: [['message-id', PICK]], example: '/giveaway delete message-id:Nitro', notes: 'This cannot be undone.' },
   { id: 'giveaway fix', desc: 'Fix a giveaway that failed to end', who: WHO.mgr, usage: '/giveaway fix message-id:<pick>', opts: [['message-id', PICK + ' Only running giveaways are listed.']], example: '/giveaway fix message-id:Nitro', notes: 'Ends it if its time is up, or refreshes its message if not.' },
@@ -978,6 +1005,15 @@ client.on('interactionCreate', async (i) => {
     const g = db.giveaways[i.options.getString('message-id')];
     if (!g || g.guildId !== i.guildId) return i.reply({ content: 'Giveaway not found.', ...eph });
 
+    if (sub === 'extend') {
+      if (g.ended) return i.reply({ content: '❌ That giveaway has already ended.', ...eph });
+      const timeStr = i.options.getString('time'), add = /<t:\d+/.test(timeStr) ? null : parseMs(timeStr);
+      if (!add || add < 1000) return i.reply({ content: 'Invalid time. Try `30 minutes`, `2 hours` or `1 day`.', ...eph });
+      if (add > 60 * 864e5) return i.reply({ content: 'Invalid time. You can add up to 60 days at once.', ...eph });
+      if (g.paused) g.pausedLeft = (g.pausedLeft || 0) + add; else g.endsAt += add;
+      save(); await refreshMessage(g);
+      return i.reply({ content: `✅ Added **${shortLeft(add)}** to **${g.prize}**. ${g.paused ? `It is paused with ${shortLeft(g.pausedLeft)} left.` : `It now ends <t:${Math.floor(g.endsAt / 1000)}:R>.`}`, ...eph });
+    }
     if (sub === 'pause') {
       if (g.ended) return i.reply({ content: '❌ That giveaway has already ended.', ...eph });
       if (g.paused) return i.reply({ content: '❌ That giveaway is already paused.', ...eph });
@@ -1029,6 +1065,9 @@ client.on('interactionCreate', async (i) => {
       const prize = i.options.getString('prize'), winners = i.options.getInteger('winners'), dur = i.options.getString('duration');
       if (prize) g.prize = prize;
       if (winners) g.winners = winners;
+      const endMsg = i.options.getString('giveaway-end-message'), dmHost = i.options.getBoolean('dm-host');
+      if (endMsg !== null) g.endMessage = /^(none|off)$/i.test(endMsg.trim()) ? null : endMsg.trim().slice(0, 1500);
+      if (dmHost !== null) g.dmHost = dmHost;
       if (dur && !g.ended) { const t = parseDuration(dur); if (!t) return i.reply({ content: 'Invalid duration.', ...eph }); g.endsAt = t; }
       save();
       const { msg } = await fetchMsg(g); if (msg) await msg.edit({ embeds: [embedFor(g, g.ended)], components: [enterRow(g, g.ended)] });
@@ -1046,7 +1085,7 @@ async function launchGiveaway(o) {
     guildId: o.guildId, channelId: o.ch.id, messageId: null, endsAt: o.endsAt, ended: false,
     prize: o.prize, winners: o.winners, host: o.host, extra: o.extra || {}, winnersRole: o.winnersRole || null,
     claimMs: o.claimMs || null, dmMessage: o.dmMessage || null, image: o.image || null, thumbnail: o.thumbnail || null,
-    color: o.color, endColor: o.endColor, bypass: o.bypass || [], req: o.req, entries: {}, winnerIds: [], claimed: [],
+    color: o.color, endColor: o.endColor, bypass: o.bypass || [], endMessage: o.endMessage || null, dmHost: !!o.dmHost, req: o.req, entries: {}, winnerIds: [], claimed: [],
   };
   const msg = await o.ch.send({ embeds: [embedFor(g)], components: [enterRow(g)] });
   g.messageId = msg.id; db.giveaways[msg.id] = g; save();
@@ -1064,7 +1103,7 @@ function readGiveawayOptions(i) {
     claimMs: claimStr ? parseMs(claimStr) : null, dmMessage: o.getString('giveaway-winners-dm-message'),
     image: o.getAttachment('image')?.url || null, thumbnail: o.getAttachment('thumbnail')?.url || null,
     color: parseColor(o.getString('color'), 0x5865f2), endColor: parseColor(o.getString('end-color'), 0x2b2d31),
-    bypass: ids(o.getString('requirement-bypass-roles')), createMessage: o.getString('giveaway-create-message'),
+    bypass: ids(o.getString('requirement-bypass-roles')), createMessage: o.getString('giveaway-start-message'), endMessage: o.getString('giveaway-end-message'), dmHost: !!o.getBoolean('dm-host'),
     req: {
       roles: ids(o.getString('required-roles')), boosts: o.getInteger('required-server-boosts') || 0,
       serverTag: !!o.getBoolean('require-server-tag'),
@@ -1164,7 +1203,7 @@ async function onAutocomplete(i) {
     if (f.name !== 'message-id') return await i.respond([]);
     let list = Object.values(db.giveaways).filter((g) => g.guildId === i.guildId);
     if (sub === 'reroll') list = list.filter((g) => g.ended);
-    else if (sub === 'end' || sub === 'fix' || sub === 'add-entries') list = list.filter((g) => !g.ended);
+    else if (sub === 'end' || sub === 'fix' || sub === 'add-entries' || sub === 'extend') list = list.filter((g) => !g.ended);
     else if (sub === 'pause') list = list.filter((g) => !g.ended && !g.paused);
     else if (sub === 'resume') list = list.filter((g) => g.paused);
     else if (sub === 'winners') list = list.filter((g) => g.ended);
@@ -1358,7 +1397,7 @@ async function createFromWeb(guild, s, b) {
     guildId: guild.id, ch, endsAt, prize, winners: int(b.winners, 1, 50), host: s.uid, extra,
     winnersRole: hasRole(b.winnersRole) ? b.winnersRole : null, claimMs, dmMessage: str(b.dmMessage, 1500) || null,
     image: link(b.image), thumbnail: link(b.thumbnail), color: parseColor(str(b.color, 7), 0x5865f2), endColor: parseColor(str(b.endColor, 7), 0x2b2d31),
-    bypass: roleList(b.bypass), createMessage: str(b.createMessage, 1500) || null,
+    bypass: roleList(b.bypass), createMessage: str(b.createMessage, 1500) || null, endMessage: str(b.endMessage, 1500) || null, dmHost: !!b.dmHost,
     req: { roles: roleList(b.requiredRoles), boosts: b.boosts ? 1 : 0, serverTag: !!b.serverTag,
       daily: int(b.daily, 0, 100000), weekly: int(b.weekly, 0, 100000), monthly: int(b.monthly, 0, 100000), total: int(b.total, 0, 1000000), ...(rs ? { server: rs } : {}) },
   });
@@ -1479,7 +1518,8 @@ function servePage(res, name) {
 async function handle(req, res) {
   const url = new URL(req.url, 'http://x'), p = url.pathname;
   const proto = String(req.headers['x-forwarded-proto'] || 'http').split(',')[0].trim();
-  const site = `${proto}://${req.headers['x-forwarded-host'] || req.headers.host}`;   // the address the visitor is actually on
+  const hostHeader = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+  const site = `${proto}://${hostHeader}`;   // the address the visitor is actually on
   res.gvSecure = proto === 'https';
   res.setHeader('X-Content-Type-Options', 'nosniff');
   if (req.method !== 'GET' && req.method !== 'HEAD' && req.headers.origin) {
@@ -1487,7 +1527,7 @@ async function handle(req, res) {
     let ok = false;
     try {
       const oh = new URL(req.headers.origin).host;
-      ok = oh === req.headers.host || oh === req.headers['x-forwarded-host'] || (!!BASE && oh === new URL(BASE).host);
+      ok = oh === req.headers.host || oh === hostHeader || (!!BASE && oh === new URL(BASE).host);
     } catch { /* invalid origin */ }
     if (!ok) return sendJson(res, 403, { error: 'Bad origin.' });
   }
@@ -1503,13 +1543,24 @@ async function handle(req, res) {
   }
   if (p === '/callback') {
     const ck = parseCookies(req), code = url.searchParams.get('code'), state = url.searchParams.get('state');
-    if (!loginReady() || !code || !state || state !== ck.gv_state) return redirect(res, '/dashboard?error=login');
-    const tok = await fetch('https://discord.com/api/oauth2/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ client_id: process.env.CLIENT_ID, client_secret: process.env.CLIENT_SECRET, grant_type: 'authorization_code', code, redirect_uri: `${site}/callback` }) }).then((r) => r.json());
-    if (!tok.access_token) return redirect(res, '/dashboard?error=login');
-    const auth = { headers: { Authorization: `Bearer ${tok.access_token}` } };
-    const [user, guilds] = await Promise.all([fetch('https://discord.com/api/users/@me', auth).then((r) => r.json()), fetch('https://discord.com/api/users/@me/guilds', auth).then((r) => r.json())]);
-    if (!user.id) return redirect(res, '/dashboard?error=login');
+    if (!loginReady()) return redirect(res, '/dashboard?error=secret');
+    if (url.searchParams.get('error')) return redirect(res, '/dashboard?error=denied');
+    if (!code || !state || state !== ck.gv_state) return redirect(res, '/dashboard?error=state');
+    let tok, user, guilds;
+    try {
+      tok = await fetch('https://discord.com/api/oauth2/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ client_id: process.env.CLIENT_ID, client_secret: process.env.CLIENT_SECRET, grant_type: 'authorization_code', code, redirect_uri: `${site}/callback` }) })
+        .then(async (r) => ({ status: r.status, body: await r.json().catch(() => ({})) }));
+    } catch (e) { console.error('OAuth: could not reach Discord', e); return redirect(res, '/dashboard?error=network'); }
+    if (!tok.body.access_token) {
+      console.error(`OAuth: Discord refused the login (HTTP ${tok.status}) redirect_uri=${site}/callback`, tok.body);
+      return redirect(res, `/dashboard?error=${tok.body.error === 'invalid_client' ? 'secret' : tok.body.error === 'invalid_grant' ? 'redirect' : 'login'}`);
+    }
+    try {
+      const auth = { headers: { Authorization: `Bearer ${tok.body.access_token}` } };
+      [user, guilds] = await Promise.all([fetch('https://discord.com/api/users/@me', auth).then((r) => r.json()), fetch('https://discord.com/api/users/@me/guilds', auth).then((r) => r.json())]);
+    } catch (e) { console.error('OAuth: could not read your Discord profile', e); return redirect(res, '/dashboard?error=network'); }
+    if (!user.id) { console.error('OAuth: profile had no id', user); return redirect(res, '/dashboard?error=login'); }
     for (const [k, v] of Object.entries(sessions())) if (v.exp < Date.now()) delete sessions()[k];
     const sid = crypto.randomBytes(24).toString('hex');
     sessions()[sid] = { uid: user.id, username: user.global_name || user.username, avatar: avatarUrl(user.id, user.avatar), exp: Date.now() + 7 * 864e5,
@@ -1618,7 +1669,7 @@ async function handle(req, res) {
     if (act === 'config') {
       return sendJson(res, 200, { prize: g.prize, winners: g.winners, channelId: g.channelId, extra: Object.entries(g.extra || {}).map(([role, entries]) => ({ role, entries })),
         bypass: g.bypass || [], req: g.req, claimTime: g.claimMs ? `${Math.max(1, Math.round(g.claimMs / 60000))} minutes` : '', winnersRole: g.winnersRole || '',
-        dmMessage: g.dmMessage || '', color: hex(g.color), endColor: hex(g.endColor), image: g.image || '', thumbnail: g.thumbnail || '' });
+        dmMessage: g.dmMessage || '', endMessage: g.endMessage || '', dmHost: !!g.dmHost, color: hex(g.color), endColor: hex(g.endColor), image: g.image || '', thumbnail: g.thumbnail || '' });
     }
     if (req.method !== 'POST') return sendJson(res, 405, { error: 'Use POST.' });
     let r;
