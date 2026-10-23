@@ -906,7 +906,7 @@ client.once('ready', async () => {
     : Routes.applicationCommands(process.env.CLIENT_ID);
   await rest.put(route, { body });
   // Scrolling status: the text slides one character every STATUS_SPEED ms and loops
-  const MARQUEE = 'givevanced.onrender.com | Made by @lav1nrules ✦ ';
+  const MARQUEE = 'givevanced.is-a.bot | Made by @lav1nrules ✦ ';
   const WINDOW = 24;          // characters shown at once
   const STATUS_SPEED = 2000;  // ms between updates (Discord may drop updates if this is too fast)
   let pos = 0;
