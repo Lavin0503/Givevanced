@@ -94,7 +94,7 @@ const needLogin=(me,t)=>`<div class="card center"><div class="t">${t||'Log in to
 async function home(me){
   const err=new URLSearchParams(location.search).get('error');
   let h=`<h1>Your <span class="accent">dashboard</span></h1><p class="sub">Manage giveaways and join them in the servers you share with Givevanced.</p>`;
-  if(err)h+=`<div class="msg bad">Discord login failed. Please try again.</div>`;
+  if(err){const why={state:'Your login session expired, or you started on a different web address. Open the dashboard from one address only and try again.',denied:'You cancelled the Discord login.',secret:'The bot owner needs to check the CLIENT_SECRET setting (it is missing or wrong).',redirect:'Discord rejected the redirect address. The owner needs to add <b>'+esc(location.origin)+'/callback</b> under OAuth2 > Redirects in the Discord Developer Portal.',network:'Could not reach Discord just now. Please try again in a moment.'}[err]||'Discord login failed. Please try again.';h+=`<div class="msg bad">${why}</div>`}
   if(!me.user){app.innerHTML=h+needLogin(me,'Log in to get started');return}
   const [sv,r]=await Promise.all([api('/api/servers'),api('/api/giveaways')]);
   const servers=sv.d.servers||[];
@@ -206,7 +206,8 @@ function tabCreate(t){
   <h3 class="sec">Winners</h3>
   <div class="f2"><div class="f"><label>Claim time (optional)</label><input id="f_claim" placeholder="e.g. 24 hours"><div class="hint">Winners get a Claim button in their DMs and are rerolled if they don't use it in time.</div></div><div class="f"><label>Role given to winners</label><select id="f_wrole"><option value="">None</option>${roleOpts()}</select></div></div>
   <div class="f"><label>DM message to winners (use {prize} and {server})</label><textarea id="f_dm" rows="2" maxlength="1500"></textarea></div>
-  <div class="f"><label>Message sent after creating</label><input id="f_cmsg" maxlength="1500"></div>
+  <div class="f2"><div class="f"><label>Start message (sent when it starts)</label><input id="f_cmsg" maxlength="1500"></div><div class="f"><label>End message (sent when it ends; {prize}, {winners} work)</label><input id="f_endmsg" maxlength="1500"></div></div>
+  <label class="chk" style="margin-bottom:14px"><input type="checkbox" id="f_dmhost"> DM the host when it ends</label>
   <h3 class="sec">Look</h3>
   <div class="f2"><div class="f"><label>Embed colour</label><input id="f_color" type="color" value="#5865f2"></div><div class="f"><label>Colour after it ends</label><input id="f_ecolor" type="color" value="#2b2d31"></div></div>
   <div class="f2"><div class="f"><label>Image URL (https)</label><input id="f_image" placeholder="https://..."></div><div class="f"><label>Thumbnail URL (https)</label><input id="f_thumb" placeholder="https://..."></div></div>
@@ -217,7 +218,7 @@ function tabCreate(t){
     const x=await post('/api/server/'+SID+'/giveaway',{prize:val('f_prize'),duration:val('f_duration'),winners:val('f_winners'),channelId:val('f_channel'),requiredRoles:sel('f_req'),bypass:sel('f_bypass'),
       boosts:document.getElementById('f_boost').checked,serverTag:document.getElementById('f_tag').checked,daily:val('f_daily'),weekly:val('f_weekly'),monthly:val('f_monthly'),total:val('f_total'),
       extra:[...document.querySelectorAll('.xrow')].map(r=>({role:r.querySelector('.xr').value,entries:r.querySelector('.xn').value})),
-      requiredServer:val('f_server'),serverInvite:val('f_invite'),claimTime:val('f_claim'),winnersRole:val('f_wrole'),dmMessage:val('f_dm'),createMessage:val('f_cmsg'),color:val('f_color'),endColor:val('f_ecolor'),image:val('f_image'),thumbnail:val('f_thumb')});
+      requiredServer:val('f_server'),serverInvite:val('f_invite'),claimTime:val('f_claim'),winnersRole:val('f_wrole'),dmMessage:val('f_dm'),createMessage:val('f_cmsg'),endMessage:val('f_endmsg'),dmHost:document.getElementById('f_dmhost').checked,color:val('f_color'),endColor:val('f_ecolor'),image:val('f_image'),thumbnail:val('f_thumb')});
     e.target.disabled=false;
     if(x.ok){curTab='Giveaways';await server(SID,ME);flash(`✅ Giveaway created! <a href="/giveaway/${x.d.id}" style="text-decoration:underline">View it</a>`,true)}
     else flash(esc(x.d.error||'Something went wrong.'),false);
@@ -230,7 +231,7 @@ async function clone(id){
   set('f_prize',c.prize);set('f_winners',c.winners);if(SV.channels.some(x=>x.id===c.channelId))set('f_channel',c.channelId);
   ms('f_req',c.req.roles);ms('f_bypass',c.bypass);document.getElementById('f_boost').checked=!!c.req.boosts;document.getElementById('f_tag').checked=!!c.req.serverTag;
   set('f_daily',c.req.daily);if(c.req.server&&[...document.getElementById('f_server').options].some(o=>o.value===c.req.server.id))set('f_server',c.req.server.id);set('f_weekly',c.req.weekly);set('f_monthly',c.req.monthly);set('f_total',c.req.total);
-  c.extra.forEach(e=>addXRow(e.role,e.entries));set('f_claim',c.claimTime);set('f_wrole',c.winnersRole);set('f_dm',c.dmMessage);set('f_color',c.color);set('f_ecolor',c.endColor);set('f_image',c.image);set('f_thumb',c.thumbnail);
+  c.extra.forEach(e=>addXRow(e.role,e.entries));set('f_claim',c.claimTime);set('f_wrole',c.winnersRole);set('f_dm',c.dmMessage);set('f_endmsg',c.endMessage);document.getElementById('f_dmhost').checked=!!c.dmHost;set('f_color',c.color);set('f_ecolor',c.endColor);set('f_image',c.image);set('f_thumb',c.thumbnail);
   flash('Settings copied. Enter a new duration and create it.',true);document.getElementById('f_duration').focus();
 }
 function tabSettings(t){
