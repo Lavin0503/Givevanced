@@ -523,8 +523,9 @@ async function templateCommand(i) {
 }
 
 /* ───────────── .gv test commands (testers only) ───────────── */
+const serverInvites = new Map();   // guild id -> invite link, so I only create each one once
 const GV_USERS = ['1411789389163401277', '1423109124803264623'];
-const GV_HELP = '`.gv test` or `.gv test help` this list\n`.gv test dummy [giveaway-id] [count]` add dummy users to a giveaway (default: newest running giveaway, 5 users)\n`.gv test undummy [giveaway-id]` remove the dummy users again\n`.gv say <text>` make the bot say something\n`.gv emojis` list every emoji uploaded to the bot';
+const GV_HELP = '`.gv test` or `.gv test help` this list\n`.gv test dummy [giveaway-id] [count]` add dummy users to a giveaway (default: newest running giveaway, 5 users)\n`.gv test undummy [giveaway-id]` remove the dummy users again\n`.gv say <text>` make the bot say something\n`.gv emojis` list every emoji uploaded to the bot\n`.gv servers [page]` list every server the bot is in, with an invite link';
 async function handleGv(m) {
   const args = m.content.trim().split(/\s+/).slice(1), cmd = (args[0] || '').toLowerCase();
   const reply = (e) => m.reply({ embeds: [e], allowedMentions: { repliedUser: false } }).catch(() => {});
@@ -536,6 +537,20 @@ async function handleGv(m) {
     if (!text.trim()) return note('Say what? Use `.gv say <text>`.', false);
     if (m.guild) await m.delete().catch(() => {});
     return m.channel.send({ content: text.slice(0, 2000), allowedMentions: { parse: ['users', 'roles'] } });
+  }
+  if (cmd === 'servers') {
+    const all = [...client.guilds.cache.values()].sort((a, b) => (b.memberCount || 0) - (a.memberCount || 0));
+    const per = 8, pages = Math.max(1, Math.ceil(all.length / per));
+    const page = Math.min(Math.max(parseInt(args[1], 10) || 1, 1), pages);
+    m.channel.sendTyping?.().catch?.(() => {});
+    const lines = [];
+    for (const [n, gd] of all.slice((page - 1) * per, page * per).entries()) {
+      const url = (gd.vanityURLCode ? `https://discord.gg/${gd.vanityURLCode}` : serverInvites.get(gd.id)) || await makeInvite(gd);
+      if (url) serverInvites.set(gd.id, url);
+      lines.push(`**${(page - 1) * per + n + 1}. ${gd.name}**\n${(gd.memberCount ?? '?').toLocaleString()} members · ID \`${gd.id}\` · owner <@${gd.ownerId}>\n${url ? `[Join](${url}) · ${url}` : 'No invite (I do not have the Create Invite permission there)'}`);
+    }
+    return reply(new EmbedBuilder().setColor(0x5865f2).setTitle(`Servers I'm in (${all.length})`).setDescription(lines.join('\n\n').slice(0, 4000) || 'I am not in any servers.')
+      .setFooter({ text: `Page ${page}/${pages}${pages > 1 ? ' · use .gv servers <page> for more' : ''}` }));
   }
   if (cmd === 'emojis') {
     const list = [...(await client.application.emojis.fetch()).values()];
