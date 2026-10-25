@@ -940,6 +940,42 @@ client.on('guildCreate', () => { checkRequiredServers().catch(console.error); })
 client.on('guildMemberAdd', (m) => { onServerJoin(m.guild.id, m.id).catch(console.error); });
 client.on('guildMemberRemove', (m) => { onServerLeave(m.guild.id, m.id).catch(console.error); });
 
+/* ───────────── the bot's status ─────────────
+   Discord only shows ONE activity at a time, so the status cycles through these phases:
+   1) a scrolling "Playing" line that moves one character every STATUS_SPEED ms,
+   2) a custom status (the bubble style, no "Playing") saying the website address,
+   3) a custom status saying who made the bot.
+   Bots can't show an emoji in a custom status. */
+const STATUS_SPEED = 2000;   // ms per step (Discord may drop updates if this is much faster)
+const WINDOW = 28;           // characters of the scrolling line shown at once
+function marqueeText() {
+  const gw = Object.values(db.giveaways).filter((g) => !g.ended).length, sv = client.guilds.cache.size;
+  return `Giveaway Boat for Free! | Handling ${gw} giveaway${gw === 1 ? '' : 's'} in ${sv} Server${sv === 1 ? '' : 's'} ✦ `;
+}
+function startStatus(speed = STATUS_SPEED) {
+  const phases = [
+    { kind: 'marquee', ticks: 15 },
+    { kind: 'custom', text: 'givevanced.is-a.bot', ticks: 4 },
+    { kind: 'custom', text: 'Made by lav1nrules', ticks: 4 },
+  ];
+  let phase = 0, left = phases[0].ticks, pos = 0, last = '';
+  const rotate = () => {
+    const ph = phases[phase];
+    let activity;
+    if (ph.kind === 'marquee') {
+      const m = marqueeText();
+      pos %= m.length;
+      activity = { name: (m + m).slice(pos, pos + WINDOW).trim(), type: ActivityType.Playing };
+      pos++;
+    } else activity = { name: 'Custom Status', state: ph.text, type: ActivityType.Custom };
+    const key = JSON.stringify(activity);
+    if (key !== last) { client.user.setPresence({ activities: [activity], status: 'online' }); last = key; }   // only send real changes
+    if (--left <= 0) { phase = (phase + 1) % phases.length; left = phases[phase].ticks; }
+  };
+  rotate();
+  return { rotate, timer: setInterval(rotate, speed) };
+}
+
 client.once('ready', async () => {
   const rest = new REST().setToken(process.env.TOKEN);
   const body = [gw, messagesCmd, helpCmd, blacklistCmd, templateCmd, leaderboardCmd, mywinsCmd, myentriesCmd, statsCmd].map((c) => c.toJSON());
@@ -947,18 +983,7 @@ client.once('ready', async () => {
     ? Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID)
     : Routes.applicationCommands(process.env.CLIENT_ID);
   await rest.put(route, { body });
-  // Scrolling status: the text slides one character every STATUS_SPEED ms and loops
-  const MARQUEE = 'givevanced.is-a.bot | Made by @lav1nrules ✦ ';
-  const WINDOW = 24;          // characters shown at once
-  const STATUS_SPEED = 2000;  // ms between updates (Discord may drop updates if this is too fast)
-  let pos = 0;
-  const rotate = () => {
-    const text = (MARQUEE + MARQUEE).slice(pos, pos + WINDOW).trim();
-    pos = (pos + 1) % MARQUEE.length;
-    client.user.setPresence({ activities: [{ name: text, type: ActivityType.Playing }], status: 'online' });
-  };
-  rotate();
-  setInterval(rotate, STATUS_SPEED);
+  startStatus();
   console.log(`Givevanced online as ${client.user.tag}`);
 });
 
