@@ -111,7 +111,6 @@ footer .wrap{align-items:center}.legal{flex-basis:100%;font-size:12px;opacity:.8
 @media(max-width:560px){.nr .invite{display:none}}
 @media(max-width:860px){.grid2{grid-template-columns:1fr;gap:40px}.embed{margin:0 auto}.feat,.steps{grid-template-columns:1fr}.cmds{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,1fr)}.links{display:none}.sec{padding:60px 0}.hero{padding-top:48px}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
-
 .demo-grid{display:grid;grid-template-columns:1fr auto;gap:64px;align-items:center}
 .demo-grid .sub{margin-bottom:28px}
 .demo-frame{width:min(100%,360px);aspect-ratio:360/712;border-radius:22px;overflow:hidden;border:1px solid var(--line);box-shadow:0 30px 80px -20px rgba(255,93,143,.35);background:#02030a}
@@ -229,7 +228,14 @@ body{display:flex;flex-direction:column;align-items:center;justify-content:cente
 #ctl button{background:var(--g);border:0;color:#fff;border-radius:99px;width:38px;height:38px;font-size:16px;cursor:pointer;flex:none}
 #sc{flex:1;accent-color:#ff3d8b}
 #ov{position:absolute;inset:0;z-index:20;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5cqw;background:rgba(5,6,20,.82);cursor:pointer}
-#ov img{width:34cqw}
+#ov{background:radial-gradient(circle at 50% 45%,rgba(255,61,139,.28),rgba(5,6,20,.92) 65%)}
+#ov .btn{position:relative;font-size:6.4cqw;padding:4.2cqw 11cqw;animation:bpulse 1.8s ease-in-out infinite;transition:filter .2s}
+#ov .btn:hover{filter:brightness(1.12)}
+#ov .btn::before{content:&quot;&quot;;position:absolute;inset:0;border-radius:inherit;border:.6cqw solid rgba(255,176,32,.75);animation:ring 1.8s ease-out infinite;pointer-events:none}
+#ov .btn::after{content:&quot;&quot;;position:absolute;inset:0;border-radius:inherit;background:linear-gradient(110deg,transparent 35%,rgba(255,255,255,.55) 50%,transparent 65%);background-size:250% 100%;animation:shine 2.4s linear infinite;pointer-events:none}
+@keyframes bpulse{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}
+@keyframes ring{0%{transform:scale(1);opacity:.9}100%{transform:scale(1.35,1.8);opacity:0}}
+@keyframes shine{from{background-position:150% 0}to{background-position:-100% 0}}
 .si{width:5.2cqw;height:5.2cqw;filter:none;vertical-align:middle;display:inline-block}
 .dc{width:90cqw;position:relative;background:#313338;border-radius:4cqw;padding:3.5cqw;box-shadow:0 5cqw 14cqw rgba(0,0,0,.55),0 0 10cqw rgba(88,101,242,.25);font-size:3.4cqw;color:#dbdee1;line-height:1.4;text-align:left}
 .dh{display:flex;align-items:center;gap:2cqw;margin-bottom:-6cqw;position:relative}
@@ -373,7 +379,7 @@ body{display:flex;flex-direction:column;align-items:center;justify-content:cente
   &lt;/div&gt;
 &lt;/div&gt;
 
-&lt;div id=&quot;ov&quot;&gt;&lt;img data-i=&quot;logo&quot; class=&quot;ic&quot;&gt;&lt;div class=&quot;btn&quot; style=&quot;font-size:6cqw;padding:4cqw 10cqw&quot;&gt;▶ Play ad&lt;/div&gt;&lt;/div&gt;
+&lt;div id=&quot;ov&quot;&gt;&lt;div class=&quot;btn&quot;&gt;▶ Play ad&lt;/div&gt;&lt;/div&gt;
 &lt;/div&gt;
 &lt;div id=&quot;ctl&quot;&gt;&lt;button id=&quot;pb&quot;&gt;▶&lt;/button&gt;&lt;input id=&quot;sc&quot; type=&quot;range&quot; min=&quot;0&quot; max=&quot;43&quot; step=&quot;0.01&quot; value=&quot;0&quot;&gt;&lt;span id=&quot;tm&quot;&gt;0:00&lt;/span&gt;&lt;/div&gt;
 &lt;script&gt;
@@ -393,7 +399,7 @@ function seek(x){t=Math.max(0,Math.min(END,x));A.forEach(a=&gt;a.currentTime=t*1
 function setP(p){playing=p;$(&#x27;pb&#x27;).textContent=p?&#x27;❚❚&#x27;:(t&gt;=END?&#x27;↻&#x27;:&#x27;▶&#x27;);last=performance.now()}
 function toggle(){if(!playing&amp;&amp;t&gt;=END)seek(0);$(&#x27;ov&#x27;).style.display=&#x27;none&#x27;;setP(!playing)}
 function loop(n){if(playing){t+=(n-last)/1000;last=n;if(t&gt;=END){seek(END);setP(false)}else seek(t)}requestAnimationFrame(loop)}
-requestAnimationFrame(()=&gt;{A=document.getAnimations();A.forEach(a=&gt;a.pause());seek(0);requestAnimationFrame(loop)});
+requestAnimationFrame(()=&gt;{A=document.getAnimations().filter(a=&gt;!(a.effect&amp;&amp;a.effect.target&amp;&amp;a.effect.target.closest(&#x27;#ov,#ctl&#x27;)));A.forEach(a=&gt;a.pause());seek(0);requestAnimationFrame(loop)});
 $(&#x27;pb&#x27;).onclick=toggle;$(&#x27;ov&#x27;).onclick=toggle;
 $(&#x27;sc&#x27;).oninput=e=&gt;seek(+e.target.value);
 addEventListener(&#x27;keydown&#x27;,e=&gt;{if(e.code===&#x27;Space&#x27;){e.preventDefault();toggle()}if(e.code===&#x27;ArrowRight&#x27;)seek(t+2);if(e.code===&#x27;ArrowLeft&#x27;)seek(t-2)});
