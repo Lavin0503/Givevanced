@@ -194,7 +194,7 @@ async function announce(g, ch, winners) {
   for (const w of winners) {
     if (g.winnersRole && guild) guild.members.fetch(w).then((m) => m.roles.add(g.winnersRole)).catch(() => {});
     const custom = g.dmMessage ? fill(g.dmMessage) : '';
-    if (g.claimMs) {
+    if (g.claimMs && !g.claimInChannel) {
       // Claim button is sent to the winner's DMs
       const e = new EmbedBuilder().setColor(g.color).setTitle(`${EM.trophy} You won!`)
         .setDescription(`You won **${g.prize}** in **${guild?.name ?? 'a server'}**!\n${EM.hourglass} Click **Claim** <t:${Math.floor(g.claimDeadline / 1000)}:R> or you'll be rerolled.${custom ? `\n\n${custom}` : ''}\n\n[Jump to giveaway](${link})`);
@@ -211,7 +211,10 @@ async function announce(g, ch, winners) {
     ? `Congratulations ${winners.map((w) => `<@${w}>`).join(', ')}! You won **${g.prize}**!`
     : `No valid entries for **${g.prize}**, so no winner was chosen.`;
   const payload = { allowedMentions: { users: winners } };
-  if (g.claimMs && winners.length) {
+  if (g.claimMs && g.claimInChannel && winners.length) {
+    desc += `\n${EM.hourglass} Press **Claim** below within <t:${Math.floor(g.claimDeadline / 1000)}:R> or you'll be rerolled.`;
+    payload.components = [claimRow(g)];
+  } else if (g.claimMs && winners.length) {
     if (failed.length < winners.length) desc += `\n${EM.mail} Check your DMs to claim within <t:${Math.floor(g.claimDeadline / 1000)}:R>.`;
     if (failed.length) {
       desc += `\n${failed.map((w) => `<@${w}>`).join(', ')}: your DMs are closed, so claim here within <t:${Math.floor(g.claimDeadline / 1000)}:R>.`;
@@ -307,7 +310,7 @@ const addGiveawayOptions = (s, afterRequired) => {
     .addStringOption((o) => o.setName('extra-entries').setDescription('Extra entries for roles, e.g. "@role1 5, @role2 10"'))
     .addStringOption((o) => o.setName('giveaway-start-message').setDescription('The message the bot sends when this giveaway starts'))
     .addRoleOption((o) => o.setName('giveaway-winners-role').setDescription('The role the bot gives to the winners'))
-    .addStringOption((o) => o.setName('claim-time').setDescription('How long winners have to click Claim before being rerolled, e.g. "24 hours"'))
+    .addStringOption((o) => o.setName('claim-time').setDescription('Time to claim before a reroll, e.g. "24 hours". Add "channel" to claim there, not in DMs'))
     .addStringOption((o) => o.setName('giveaway-winners-dm-message').setDescription('DM sent to winners. Use {prize} and {server}'))
     .addAttachmentOption((o) => o.setName('image').setDescription('Image shown at the bottom of the embed'))
     .addAttachmentOption((o) => o.setName('thumbnail').setDescription('Thumbnail shown at the top right of the embed'))
@@ -340,7 +343,8 @@ gw.addSubcommand((s) => idOpt(s.setName('edit').setDescription('Edit a giveaway'
   .addIntegerOption((o) => o.setName('winners').setDescription('New winner count').setMinValue(1).setMaxValue(50))
   .addStringOption((o) => o.setName('duration').setDescription('New duration from now, or a Discord timestamp'))
   .addStringOption((o) => o.setName('giveaway-end-message').setDescription('New end message (type none to remove it)'))
-  .addBooleanOption((o) => o.setName('dm-host').setDescription('DM the host when it ends (true or false)')));
+  .addBooleanOption((o) => o.setName('dm-host').setDescription('DM the host when it ends (true or false)'))
+  .addStringOption((o) => o.setName('claim-time').setDescription('New claim time, "24 hours channel" to claim in the channel, or none to turn it off')));
 gw.addSubcommand((s) => idOpt(s.setName('end').setDescription('End a giveaway with the giveaway message ID'), 'Giveaway message ID'));
 gw.addSubcommand((s) => idOpt(s.setName('fix').setDescription('Fix a giveaway if it fails to end'), 'Giveaway message ID'));
 gw.addSubcommand((s) => s.setName('manager-roles').setDescription('Set roles with which people can use every command in the bot'));
@@ -506,7 +510,7 @@ async function templateCommand(i) {
     const g = db.giveaways[i.options.getString('message-id')];
     if (!g || g.guildId !== i.guildId) return i.reply({ content: 'Giveaway not found.', ...eph });
     if (!tpls[name] && Object.keys(tpls).length >= 25) return i.reply({ content: '❌ You can have up to 25 templates.', ...eph });
-    tpls[name] = JSON.parse(JSON.stringify({ prize: g.prize, winners: g.winners, extra: g.extra, winnersRole: g.winnersRole, claimMs: g.claimMs, dmMessage: g.dmMessage,
+    tpls[name] = JSON.parse(JSON.stringify({ prize: g.prize, winners: g.winners, extra: g.extra, winnersRole: g.winnersRole, claimMs: g.claimMs, claimInChannel: g.claimInChannel, dmMessage: g.dmMessage,
       image: g.image, thumbnail: g.thumbnail, color: g.color, endColor: g.endColor, bypass: g.bypass, req: g.req, endMessage: g.endMessage, dmHost: g.dmHost }));
     save();
     return i.reply({ content: `✅ Saved the template **${name}**. Use it with \`/template use\`.`, ...eph });
@@ -837,7 +841,7 @@ const HELP_CMDS = [
     usage: '/giveaway create duration:<time> winners:<number> prize:<text> [options]',
     opts: [['duration', 'how long it lasts: `1 hour`, `2 days` or a Discord timestamp (required)'], ['winners', 'how many people win (required)'], ['prize', 'what is being given away (required)'],
       ['channel', 'where to post it (default: this channel)'], ['host', 'who is hosting (default: you)'], ['extra-entries', 'bonus entries for roles, like `@Booster 5, @VIP 3`'],
-      ['giveaway-start-message', 'an extra message posted when it starts'], ['giveaway-end-message', 'a message posted when it ends (`{prize}`, `{winners}`, `{entries}` and `{host}` work)'], ['dm-host', 'DM the host a summary when it ends'], ['giveaway-winners-role', 'role given to every winner'], ['claim-time', 'how long winners have to press Claim, like `24 hours`'],
+      ['giveaway-start-message', 'an extra message posted when it starts'], ['giveaway-end-message', 'a message posted when it ends (`{prize}`, `{winners}`, `{entries}` and `{host}` work)'], ['dm-host', 'DM the host a summary when it ends'], ['giveaway-winners-role', 'role given to every winner'], ['claim-time', 'how long winners have to claim before being rerolled, like `24 hours`. Winners get the Claim button in their DMs. Add the word `channel` (like `24 hours channel`) to put it in the channel instead. Leave it empty for no claiming and no auto reroll'],
       ['giveaway-winners-dm-message', 'DM sent to winners (`{prize}` and `{server}` work)'], ['image / thumbnail', 'pictures for the giveaway embed'],
       ['required-roles', 'roles needed to enter (mention them, separate with commas)'], ['required-server-boosts', 'entrant must be boosting this server'], ['require-server-tag', "entrant must have this server's tag equipped"],
       ['required-daily / weekly / monthly / total-messages', 'minimum message counts'], ['required-server', 'members must join another server first (the bot must be in both). They are entered automatically once they join, and removed if they leave'],
@@ -858,7 +862,7 @@ const HELP_CMDS = [
   { id: 'giveaway winners', desc: 'See winners and who claimed', who: WHO.mgr, usage: '/giveaway winners [message-id:<pick>]', opts: [['message-id', 'pick an ended giveaway to see its winners and claims. Leave it empty to see the last 10 giveaways and their winners']], example: '/giveaway winners', notes: '' },
   { id: 'giveaway participants', desc: 'See everyone who entered', who: WHO.mgr, usage: '/giveaway participants message-id:<pick>', opts: [['message-id', PICK]], example: '/giveaway participants message-id:Nitro', notes: 'The Participants button on a giveaway shows the same list, with paging and a Remove button for managers.' },
   { id: 'giveaway edit', desc: 'Change a giveaway', who: WHO.mgr, usage: '/giveaway edit message-id:<pick> [prize:<text>] [winners:<number>] [duration:<time>]',
-    opts: [['message-id', PICK], ['prize', 'a new prize'], ['winners', 'a new winner count'], ['duration', 'a new end time counted from now (running giveaways only)'], ['giveaway-end-message', 'a new end message, or `none` to remove it'], ['dm-host', 'turn the DM to the host on or off']], example: '/giveaway edit message-id:Nitro duration:3 hours', notes: 'Leave out anything you do not want to change.' },
+    opts: [['message-id', PICK], ['prize', 'a new prize'], ['winners', 'a new winner count'], ['duration', 'a new end time counted from now (running giveaways only)'], ['giveaway-end-message', 'a new end message, or `none` to remove it'], ['claim-time', 'a new claim time, `24 hours channel` to claim in the channel instead of DMs, or `none` to turn claiming and auto reroll off'], ['dm-host', 'turn the DM to the host on or off']], example: '/giveaway edit message-id:Nitro duration:3 hours', notes: 'Leave out anything you do not want to change.' },
   { id: 'giveaway pause', desc: 'Freeze a running giveaway', who: WHO.mgr, usage: '/giveaway pause message-id:<pick>', opts: [['message-id', PICK + ' Only running giveaways are listed.']], example: '/giveaway pause message-id:Nitro', notes: 'The timer stops and nobody can join until you resume it. The time left is kept.' },
   { id: 'giveaway resume', desc: 'Carry on a paused giveaway', who: WHO.mgr, usage: '/giveaway resume message-id:<pick>', opts: [['message-id', PICK + ' Only paused giveaways are listed.']], example: '/giveaway resume message-id:Nitro', notes: 'It ends after the time that was left when you paused it.' },
   { id: 'giveaway extend', desc: 'Add more time to a running giveaway', who: WHO.mgr, usage: '/giveaway extend message-id:<pick> time:<amount>',
@@ -914,7 +918,7 @@ function helpMessage() {
       { name: `${EM.wrench} Setup`, value: '`/giveaway manager-roles` who can use every command\n`/giveaway creator-roles` who can only create giveaways' },
       { name: '🧰 More tools', value: '`/giveaway list` running giveaways\n`/giveaway pause` and `resume`\n`/giveaway winners` winners and claims\n`/giveaway add-entries` bonus entries\n`/giveaway drop` first to click wins\n`/template` save and reuse settings\n🔔 button on a giveaway: DM me when it ends' },
       { name: `${EM.chart} Info`, value: '`/mywins` `/myentries` `/stats` `/messages`\n`/leaderboard messages` top chatters\n`/blacklist add`, `remove`, `list`\n`/help` this menu' },
-      { name: '✨ Good to know', value: '• Winners get a **Claim** button in their DMs when a claim time is set\n• Requirements: roles, boosting, server tag, message counts, or joining another server\n• Commands that need a giveaway let you pick it from a list\n• Create and manage giveaways from the website dashboard' })
+      { name: '✨ Good to know', value: '• Winners get a **Claim** button in their DMs (or the channel) when a claim time is set\n• Requirements: roles, boosting, server tag, message counts, or joining another server\n• Commands that need a giveaway let you pick it from a list\n• Create and manage giveaways from the website dashboard' })
     .setFooter({ text: 'Made by @lav1nrules' });
   return { embeds: [e], components: [...helpRows(), helpLinkRow(false)] };
 }
@@ -943,9 +947,9 @@ client.on('guildMemberRemove', (m) => { onServerLeave(m.guild.id, m.id).catch(co
 /* ───────────── the bot's status ─────────────
    Discord only shows ONE activity at a time, so the status cycles through these phases:
    1) a scrolling "Playing" line that moves one character every STATUS_SPEED ms,
-   2) a custom status (the bubble style, no "Playing") saying the website address,
-   3) a custom status saying who made the bot.
-   Bots can't show an emoji in a custom status. */
+   2) a custom status: givevanced.is-a.bot
+   3) a custom status: Made by lav1nrules
+   For bots a custom status shows as plain status text (under the name in the member list); no emoji is possible. */
 const STATUS_SPEED = 2000;   // ms per step (Discord may drop updates if this is much faster)
 const WINDOW = 28;           // characters of the scrolling line shown at once
 function marqueeText() {
@@ -955,8 +959,8 @@ function marqueeText() {
 function startStatus(speed = STATUS_SPEED) {
   const phases = [
     { kind: 'marquee', ticks: 15 },
-    { kind: 'custom', text: 'givevanced.is-a.bot', ticks: 4 },
-    { kind: 'custom', text: 'Made by lav1nrules', ticks: 4 },
+    { kind: 'custom', text: 'givevanced.is-a.bot', ticks: 5 },
+    { kind: 'custom', text: 'Made by lav1nrules', ticks: 5 },
   ];
   let phase = 0, left = phases[0].ticks, pos = 0, last = '';
   const rotate = () => {
@@ -1108,6 +1112,16 @@ client.on('interactionCreate', async (i) => {
       const endMsg = i.options.getString('giveaway-end-message'), dmHost = i.options.getBoolean('dm-host');
       if (endMsg !== null) g.endMessage = /^(none|off)$/i.test(endMsg.trim()) ? null : endMsg.trim().slice(0, 1500);
       if (dmHost !== null) g.dmHost = dmHost;
+      const claimStr = i.options.getString('claim-time');
+      if (claimStr !== null) {
+        if (/^(none|off)$/i.test(claimStr.trim())) { g.claimMs = null; g.claimDeadline = null; g.claimInChannel = false; }
+        else {
+          const ms = parseMs(claimStr);
+          if (!ms || ms < 60000) return i.reply({ content: 'Invalid claim time. Try `24 hours`, `24 hours channel`, or `none` to turn claiming off.', ...eph });
+          g.claimMs = ms; g.claimInChannel = /\b(channel|here)\b/i.test(claimStr);
+          if (g.ended && g.winnerIds.length) g.claimDeadline = Date.now() + ms;
+        }
+      }
       if (dur && !g.ended) { const t = parseDuration(dur); if (!t) return i.reply({ content: 'Invalid duration.', ...eph }); g.endsAt = t; }
       save();
       const { msg } = await fetchMsg(g); if (msg) await msg.edit({ embeds: [embedFor(g, g.ended)], components: [enterRow(g, g.ended)] });
@@ -1124,7 +1138,7 @@ async function launchGiveaway(o) {
   const g = {
     guildId: o.guildId, channelId: o.ch.id, messageId: null, endsAt: o.endsAt, ended: false,
     prize: o.prize, winners: o.winners, host: o.host, extra: o.extra || {}, winnersRole: o.winnersRole || null,
-    claimMs: o.claimMs || null, dmMessage: o.dmMessage || null, image: o.image || null, thumbnail: o.thumbnail || null,
+    claimMs: o.claimMs || null, claimInChannel: !!o.claimInChannel, dmMessage: o.dmMessage || null, image: o.image || null, thumbnail: o.thumbnail || null,
     color: o.color, endColor: o.endColor, bypass: o.bypass || [], endMessage: o.endMessage || null, dmHost: !!o.dmHost, req: o.req, entries: {}, winnerIds: [], claimed: [],
   };
   const msg = await o.ch.send({ embeds: [embedFor(g)], components: [enterRow(g)] });
@@ -1140,7 +1154,7 @@ function readGiveawayOptions(i) {
   return {
     guildId: i.guildId, prize: o.getString('prize'), winners: o.getInteger('winners'), host: (o.getUser('host') || i.user).id,
     extra: parseExtra(o.getString('extra-entries')), winnersRole: o.getRole('giveaway-winners-role')?.id || null,
-    claimMs: claimStr ? parseMs(claimStr) : null, dmMessage: o.getString('giveaway-winners-dm-message'),
+    claimMs: claimStr ? parseMs(claimStr) : null, claimInChannel: /\b(channel|here)\b/i.test(claimStr || ''), dmMessage: o.getString('giveaway-winners-dm-message'),
     image: o.getAttachment('image')?.url || null, thumbnail: o.getAttachment('thumbnail')?.url || null,
     color: parseColor(o.getString('color'), 0x5865f2), endColor: parseColor(o.getString('end-color'), 0x2b2d31),
     bypass: ids(o.getString('requirement-bypass-roles')), createMessage: o.getString('giveaway-start-message'), endMessage: o.getString('giveaway-end-message'), dmHost: !!o.getBoolean('dm-host'),
@@ -1427,7 +1441,7 @@ async function createFromWeb(guild, s, b) {
   const ch = guild.channels.cache.get(str(b.channelId, 25));
   const okType = ch && (ch.type === ChannelType.GuildText || ch.type === ChannelType.GuildAnnouncement);
   if (!okType || !ch.permissionsFor(guild.members.me)?.has(['ViewChannel', 'SendMessages', 'EmbedLinks'])) return [400, 'Pick a channel the bot can post in.'];
-  const claimStr = str(b.claimTime, 40), claimMs = claimStr ? parseMs(claimStr) : null;
+  const claimStr = str(b.claimTime, 40), claimMs = claimStr ? parseMs(claimStr) : null, claimInChannel = /\b(channel|here)\b/i.test(claimStr);
   if (claimStr && !claimMs) return [400, 'Invalid claim time. Try "24 hours".'];
   const extra = {};
   for (const e of (Array.isArray(b.extra) ? b.extra : []).slice(0, 25)) if (hasRole(e?.role)) extra[e.role] = int(e.entries, 1, 100);
@@ -1435,7 +1449,7 @@ async function createFromWeb(guild, s, b) {
   if (rs?.error) return [400, rs.error];
   const g = await launchGiveaway({
     guildId: guild.id, ch, endsAt, prize, winners: int(b.winners, 1, 50), host: s.uid, extra,
-    winnersRole: hasRole(b.winnersRole) ? b.winnersRole : null, claimMs, dmMessage: str(b.dmMessage, 1500) || null,
+    winnersRole: hasRole(b.winnersRole) ? b.winnersRole : null, claimMs, claimInChannel, dmMessage: str(b.dmMessage, 1500) || null,
     image: link(b.image), thumbnail: link(b.thumbnail), color: parseColor(str(b.color, 7), 0x5865f2), endColor: parseColor(str(b.endColor, 7), 0x2b2d31),
     bypass: roleList(b.bypass), createMessage: str(b.createMessage, 1500) || null, endMessage: str(b.endMessage, 1500) || null, dmHost: !!b.dmHost,
     req: { roles: roleList(b.requiredRoles), boosts: b.boosts ? 1 : 0, serverTag: !!b.serverTag,
@@ -1708,7 +1722,7 @@ async function handle(req, res) {
     }
     if (act === 'config') {
       return sendJson(res, 200, { prize: g.prize, winners: g.winners, channelId: g.channelId, extra: Object.entries(g.extra || {}).map(([role, entries]) => ({ role, entries })),
-        bypass: g.bypass || [], req: g.req, claimTime: g.claimMs ? `${Math.max(1, Math.round(g.claimMs / 60000))} minutes` : '', winnersRole: g.winnersRole || '',
+        bypass: g.bypass || [], req: g.req, claimTime: g.claimMs ? `${Math.max(1, Math.round(g.claimMs / 60000))} minutes${g.claimInChannel ? ' channel' : ''}` : '', winnersRole: g.winnersRole || '',
         dmMessage: g.dmMessage || '', endMessage: g.endMessage || '', dmHost: !!g.dmHost, color: hex(g.color), endColor: hex(g.endColor), image: g.image || '', thumbnail: g.thumbnail || '' });
     }
     if (req.method !== 'POST') return sendJson(res, 405, { error: 'Use POST.' });
