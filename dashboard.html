@@ -189,6 +189,15 @@ function editDlg(ds){
   document.getElementById('e_s').onclick=async()=>{const x=await post('/api/giveaway/'+ds.id+'/edit',{prize:val('e_p'),winners:val('e_w'),duration:document.getElementById('e_d')?val('e_d'):''});
     if(x.ok){d.close();await server(SID,ME);flash('✅ Giveaway updated.',true)}else document.getElementById('e_m').innerHTML=`<div class="msg bad">${esc(x.d.error)}</div>`};
 }
+async function upOrUrl(fileId,urlId){
+  const f=document.getElementById(fileId).files[0];
+  if(!f)return document.getElementById(urlId).value;
+  if(f.size>5*1024*1024)throw new Error('That image is too big (5 MB maximum).');
+  const r=await fetch('/api/upload?guild='+SID,{method:'POST',credentials:'same-origin',headers:{'Content-Type':f.type||'application/octet-stream'},body:f});
+  let d={};try{d=await r.json()}catch{}
+  if(!r.ok)throw new Error(d.error||'Upload failed.');
+  return d.url;
+}
 const val=id=>document.getElementById(id).value,sel=id=>[...document.getElementById(id).selectedOptions].map(o=>o.value);
 const roleOpts=()=>SV.roles.map(r=>`<option value="${r.id}">${esc(r.name)}</option>`).join('');
 function addXRow(role,n){const w=document.getElementById('xrows'),d=document.createElement('div');d.className='xrow';
@@ -204,21 +213,23 @@ function tabCreate(t){
   <div class="f4" style="margin-top:14px"><div class="f"><label>Messages today</label><input id="f_daily" type="number" min="0" value="0"></div><div class="f"><label>This week</label><input id="f_weekly" type="number" min="0" value="0"></div><div class="f"><label>This month</label><input id="f_monthly" type="number" min="0" value="0"></div><div class="f"><label>Total</label><input id="f_total" type="number" min="0" value="0"></div></div>
   <h3 class="sec">Extra entries</h3><div id="xrows"></div><button type="button" class="btn sm" id="addx">+ Add role</button>
   <h3 class="sec">Winners</h3>
-  <div class="f2"><div class="f"><label>Claim time (optional)</label><input id="f_claim" placeholder="e.g. 24 hours"><div class="hint">Winners get a Claim button in their DMs and are rerolled if they don't use it in time. Add the word channel (like 24 hours channel) to put the button in the channel instead, or leave this empty for no claiming.</div></div><div class="f"><label>Role given to winners</label><select id="f_wrole"><option value="">None</option>${roleOpts()}</select></div></div>
+  <div class="f2"><div class="f"><label>Claim time (optional)</label><input id="f_claim" placeholder="e.g. 24 hours"><div class="hint">Auto reroll: winners who don't press Claim in time are rerolled. Leave empty for no claiming.</div><label class="chk" style="margin-top:8px"><input type="checkbox" id="f_dmwin" checked> DM winners their Claim button</label><div class="hint">Untick it and nobody is DMed: the Claim button is posted only in the giveaway channel.</div></div><div class="f"><label>Role given to winners</label><select id="f_wrole"><option value="">None</option>${roleOpts()}</select></div></div>
   <div class="f"><label>DM message to winners (use {prize} and {server})</label><textarea id="f_dm" rows="2" maxlength="1500"></textarea></div>
   <div class="f2"><div class="f"><label>Start message (sent when it starts)</label><input id="f_cmsg" maxlength="1500"></div><div class="f"><label>End message (sent when it ends; {prize}, {winners} work)</label><input id="f_endmsg" maxlength="1500"></div></div>
   <label class="chk" style="margin-bottom:14px"><input type="checkbox" id="f_dmhost"> DM the host when it ends</label>
   <h3 class="sec">Look</h3>
   <div class="f2"><div class="f"><label>Embed colour</label><input id="f_color" type="color" value="#5865f2"></div><div class="f"><label>Colour after it ends</label><input id="f_ecolor" type="color" value="#2b2d31"></div></div>
-  <div class="f2"><div class="f"><label>Image URL (https)</label><input id="f_image" placeholder="https://..."></div><div class="f"><label>Thumbnail URL (https)</label><input id="f_thumb" placeholder="https://..."></div></div>
+  <div class="f2"><div class="f"><label>Image (upload a file or paste a link)</label><input type="file" id="f_imgfile" accept="image/png,image/jpeg,image/gif,image/webp"><input id="f_image" placeholder="or paste a https:// link" style="margin-top:8px"><div class="hint">PNG, JPG, GIF or WebP, up to 5 MB.</div></div><div class="f"><label>Thumbnail (upload a file or paste a link)</label><input type="file" id="f_thumbfile" accept="image/png,image/jpeg,image/gif,image/webp"><input id="f_thumb" placeholder="or paste a https:// link" style="margin-top:8px"><div class="hint">Shows small at the top right.</div></div></div>
   <div class="acts" style="margin-top:8px"><button class="btn main" id="f_go">${CONE} Create giveaway</button></div></div>`;
   document.getElementById('addx').onclick=()=>addXRow();
   document.getElementById('f_go').onclick=async e=>{
     e.target.disabled=true;
+    let imgUrl='',thumbUrl='';
+    try{flash('Uploading…',true);imgUrl=await upOrUrl('f_imgfile','f_image');thumbUrl=await upOrUrl('f_thumbfile','f_thumb');flash('',true)}catch(err){e.target.disabled=false;return flash(esc(err.message),false)}
     const x=await post('/api/server/'+SID+'/giveaway',{prize:val('f_prize'),duration:val('f_duration'),winners:val('f_winners'),channelId:val('f_channel'),requiredRoles:sel('f_req'),bypass:sel('f_bypass'),
       boosts:document.getElementById('f_boost').checked,serverTag:document.getElementById('f_tag').checked,daily:val('f_daily'),weekly:val('f_weekly'),monthly:val('f_monthly'),total:val('f_total'),
       extra:[...document.querySelectorAll('.xrow')].map(r=>({role:r.querySelector('.xr').value,entries:r.querySelector('.xn').value})),
-      requiredServer:val('f_server'),serverInvite:val('f_invite'),claimTime:val('f_claim'),winnersRole:val('f_wrole'),dmMessage:val('f_dm'),createMessage:val('f_cmsg'),endMessage:val('f_endmsg'),dmHost:document.getElementById('f_dmhost').checked,color:val('f_color'),endColor:val('f_ecolor'),image:val('f_image'),thumbnail:val('f_thumb')});
+      dmWinner:document.getElementById('f_dmwin').checked,requiredServer:val('f_server'),serverInvite:val('f_invite'),claimTime:val('f_claim'),winnersRole:val('f_wrole'),dmMessage:val('f_dm'),createMessage:val('f_cmsg'),endMessage:val('f_endmsg'),dmHost:document.getElementById('f_dmhost').checked,color:val('f_color'),endColor:val('f_ecolor'),image:imgUrl,thumbnail:thumbUrl});
     e.target.disabled=false;
     if(x.ok){curTab='Giveaways';await server(SID,ME);flash(`✅ Giveaway created! <a href="/giveaway/${x.d.id}" style="text-decoration:underline">View it</a>`,true)}
     else flash(esc(x.d.error||'Something went wrong.'),false);
@@ -231,7 +242,7 @@ async function clone(id){
   set('f_prize',c.prize);set('f_winners',c.winners);if(SV.channels.some(x=>x.id===c.channelId))set('f_channel',c.channelId);
   ms('f_req',c.req.roles);ms('f_bypass',c.bypass);document.getElementById('f_boost').checked=!!c.req.boosts;document.getElementById('f_tag').checked=!!c.req.serverTag;
   set('f_daily',c.req.daily);if(c.req.server&&[...document.getElementById('f_server').options].some(o=>o.value===c.req.server.id))set('f_server',c.req.server.id);set('f_weekly',c.req.weekly);set('f_monthly',c.req.monthly);set('f_total',c.req.total);
-  c.extra.forEach(e=>addXRow(e.role,e.entries));set('f_claim',c.claimTime);set('f_wrole',c.winnersRole);set('f_dm',c.dmMessage);set('f_endmsg',c.endMessage);document.getElementById('f_dmhost').checked=!!c.dmHost;set('f_color',c.color);set('f_ecolor',c.endColor);set('f_image',c.image);set('f_thumb',c.thumbnail);
+  c.extra.forEach(e=>addXRow(e.role,e.entries));set('f_claim',c.claimTime);set('f_wrole',c.winnersRole);set('f_dm',c.dmMessage);document.getElementById('f_dmwin').checked=c.dmWinner!==false;set('f_endmsg',c.endMessage);document.getElementById('f_dmhost').checked=!!c.dmHost;set('f_color',c.color);set('f_ecolor',c.endColor);set('f_image',c.image);set('f_thumb',c.thumbnail);
   flash('Settings copied. Enter a new duration and create it.',true);document.getElementById('f_duration').focus();
 }
 function tabSettings(t){
@@ -241,10 +252,12 @@ function tabSettings(t){
   <div class="hint" style="margin-bottom:14px">Hold Ctrl/Cmd to select several. Deselect all to clear.</div><button class="btn main" id="s_go">Save roles</button></div>
   <div class="card" style="margin-top:14px"><div class="t" style="margin-bottom:6px">Blacklist</div><p class="muted" style="margin-top:0">Blacklisted people can't join giveaways in this server. They're removed from live giveaways when added.</p>
   <div id="bl">${(st.blacklist||[]).map(u=>`<div class="prow"><span>${esc(u.username)} <span class="muted">· ${u.id}</span></span><button class="btn sm bad" data-bl="${u.id}">Remove</button></div>`).join('')||'<p class="muted">Nobody is blacklisted.</p>'}</div>
-  <div class="f2" style="margin-top:14px"><input id="bl_id" placeholder="User ID to blacklist"><button class="btn main" id="bl_add">Blacklist user</button></div><div class="hint">In Discord, turn on Developer Mode, right-click a person and choose Copy User ID.</div></div>`;
+  <div class="f2" style="margin-top:14px"><input id="bl_id" placeholder="User ID to blacklist"><button class="btn main" id="bl_add">Blacklist user</button></div><div class="hint">In Discord, turn on Developer Mode, right-click a person and choose Copy User ID.</div>
+  <h3 class="sec">Blacklisted roles</h3><div class="f"><label>Members with these roles cannot join (hold Ctrl/Cmd to pick several)</label><select id="s_blr" multiple>${opts(st.blacklistRoles||[])}</select></div><button class="btn main" id="s_blr_go">Save blacklisted roles</button></div>`;
   document.getElementById('s_go').onclick=async()=>{const x=await post('/api/server/'+SID+'/roles',{managerRoles:sel('s_man'),creatorRoles:sel('s_cre')});
     if(x.ok){await server(SID,ME);flash('✅ Roles saved.',true)}else flash(esc(x.d.error),false)};
   const bl=async(action,userId,msg)=>{const x=await post('/api/server/'+SID+'/blacklist',{action,userId});if(x.ok){await server(SID,ME);flash(msg,true)}else flash(esc(x.d.error),false)};
+  document.getElementById('s_blr_go').onclick=()=>post('/api/server/'+SID+'/blacklist',{action:'roles',roles:sel('s_blr')}).then(async x=>{if(x.ok){await server(SID,ME);flash('✅ Blacklisted roles saved.',true)}else flash(esc(x.d.error),false)});
   document.getElementById('bl_add').onclick=()=>bl('add',val('bl_id').trim(),'✅ User blacklisted.');
   t.querySelectorAll('[data-bl]').forEach(b=>b.onclick=()=>confirm('Remove this person from the blacklist?')&&bl('remove',b.dataset.bl,'✅ Removed from the blacklist.'));
 }
