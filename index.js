@@ -42,12 +42,14 @@ const DATA_DIR = process.env.DATA_DIR || '.';
 const FILE = `${DATA_DIR}/data.json`;
 let db = { giveaways: {}, guilds: {}, stats: {} };
 let mongoColl = null;
+let mongoImages = null;
 async function initStorage() {
   if (process.env.MONGODB_URI) {
     const { MongoClient } = require('mongodb');
     const mc = new MongoClient(process.env.MONGODB_URI);
     await mc.connect();
     mongoColl = mc.db('givevanced').collection('state');
+    mongoImages = mc.db('givevanced').collection('images');
     const doc = await mongoColl.findOne({ _id: 'main' });
     if (doc) { delete doc._id; db = { ...db, ...doc }; }
     console.log('Storage: MongoDB');
@@ -177,6 +179,8 @@ async function fetchMsg(g) {
   const ch = await client.channels.fetch(g.channelId).catch(() => null);
   return { ch, msg: ch ? await ch.messages.fetch(g.messageId).catch(() => null) : null };
 }
+// Winners get DMs (claim button and custom message) unless DMs were turned off for this giveaway
+const winnerDMs = (g) => g.dmWinner !== false && !g.claimInChannel;
 const allClaimed = (g) => !!g.claimMs && g.winnerIds.length > 0 && g.winnerIds.every((w) => (g.claimed || []).includes(w));
 const gLink = (g) => `https://discord.com/channels/${g.guildId}/${g.channelId}/${g.messageId}`;
 const linkBtn = (g) => new ButtonBuilder().setLabel('Giveaway Message').setEmoji({ id: GIFT_ID }).setStyle(ButtonStyle.Link).setURL(gLink(g));
@@ -194,7 +198,7 @@ async function announce(g, ch, winners) {
   for (const w of winners) {
     if (g.winnersRole && guild) guild.members.fetch(w).then((m) => m.roles.add(g.winnersRole)).catch(() => {});
     const custom = g.dmMessage ? fill(g.dmMessage) : '';
-    if (g.claimMs && !g.claimInChannel) {
+    if (g.claimMs && winnerDMs(g)) {
       // Claim button is sent to the winner's DMs
       const e = new EmbedBuilder().setColor(g.color).setTitle(`${EM.trophy} You won!`)
         .setDescription(`You won **${g.prize}** in **${guild?.name ?? 'a server'}**!\n${EM.hourglass} Click **Claim** <t:${Math.floor(g.claimDeadline / 1000)}:R> or you'll be rerolled.${custom ? `\n\n${custom}` : ''}\n\n[Jump to giveaway](${link})`);
@@ -202,7 +206,7 @@ async function announce(g, ch, winners) {
         const u = await client.users.fetch(w);
         await u.send({ embeds: [e], components: [claimRow(g)] });
       } catch { failed.push(w); }
-    } else if (custom) {
+    } else if (custom && winnerDMs(g)) {
       const e = new EmbedBuilder().setColor(g.color).setTitle(`${EM.trophy} You won!`).setDescription(`${custom}\n\n[Jump to giveaway](${link})`);
       client.users.fetch(w).then((u) => u.send({ embeds: [e], components: [linkRow(g)] })).catch(() => {});
     }
@@ -211,7 +215,7 @@ async function announce(g, ch, winners) {
     ? `Congratulations ${winners.map((w) => `<@${w}>`).join(', ')}! You won **${g.prize}**!`
     : `No valid entries for **${g.prize}**, so no winner was chosen.`;
   const payload = { allowedMentions: { users: winners } };
-  if (g.claimMs && g.claimInChannel && winners.length) {
+  if (g.claimMs && !winnerDMs(g) && winners.length) {
     desc += `\n${EM.hourglass} Press **Claim** below within <t:${Math.floor(g.claimDeadline / 1000)}:R> or you'll be rerolled.`;
     payload.components = [claimRow(g)];
   } else if (g.claimMs && winners.length) {
@@ -263,6 +267,7 @@ setInterval(async () => {
   await checkRequiredServers().catch((e) => console.error(e));
   await sweepServerRequirements().catch((e) => console.error(e));
   await checkPending().catch((e) => console.error(e));
+  await sweepBlacklistedRoles().catch((e) => console.error(e));
 }, 5000);
 
 /* ───────────── requirement check on entry ───────────── */
@@ -270,6 +275,7 @@ const checkEntry = (i, g) => checkEntryFor(i.member, i.user.id, i.guildId, g);
 async function checkEntryFor(m, uid, gid, g) {
   const r = g.req;
   if (blacklistOf(gid).includes(uid)) return '🚫 You are blacklisted from giveaways in this server.';
+  if ((guildCfg(gid).blacklistRoles || []).some((r) => m?.roles?.cache?.has(r))) return '🚫 One of your roles is blacklisted from giveaways in this server.';
   if (g.bypass.some((x) => m.roles.cache.has(x))) return null;
   const s = statsOf(gid, uid);
   if (r.roles.length && !r.roles.every((x) => m.roles.cache.has(x))) return 'You are missing a required role.';
@@ -311,7 +317,7 @@ const addGiveawayOptions = (s, afterRequired) => {
     .addStringOption((o) => o.setName('giveaway-start-message').setDescription('The message the bot sends when this giveaway starts'))
     .addRoleOption((o) => o.setName('giveaway-winners-role').setDescription('The role the bot gives to the winners'))
     .addStringOption((o) => o.setName('claim-time').setDescription('Time to claim before a reroll, e.g. "24 hours". Add "channel" to claim there, not in DMs'))
-    .addStringOption((o) => o.setName('giveaway-winners-dm-message').setDescription('DM sent to winners. Use {prize} and {server}'))
+    .addStringOption((o) => o.setName('giveaway-winners-dm-message').setDescription('DM sent to winners ({prize}, {server}). Type off to send no DMs (claim in the channel)'))
     .addAttachmentOption((o) => o.setName('image').setDescription('Image shown at the bottom of the embed'))
     .addAttachmentOption((o) => o.setName('thumbnail').setDescription('Thumbnail shown at the top right of the embed'))
     .addStringOption((o) => o.setName('required-roles').setDescription('Roles required to participate (separate with commas)'))
@@ -344,7 +350,8 @@ gw.addSubcommand((s) => idOpt(s.setName('edit').setDescription('Edit a giveaway'
   .addStringOption((o) => o.setName('duration').setDescription('New duration from now, or a Discord timestamp'))
   .addStringOption((o) => o.setName('giveaway-end-message').setDescription('New end message (type none to remove it)'))
   .addBooleanOption((o) => o.setName('dm-host').setDescription('DM the host when it ends (true or false)'))
-  .addStringOption((o) => o.setName('claim-time').setDescription('New claim time, "24 hours channel" to claim in the channel, or none to turn it off')));
+  .addStringOption((o) => o.setName('claim-time').setDescription('New claim time, "24 hours channel" to claim in the channel, or none to turn it off'))
+  .addBooleanOption((o) => o.setName('dm-winner').setDescription('DM winners their Claim button (false = claim in the channel only)')));
 gw.addSubcommand((s) => idOpt(s.setName('end').setDescription('End a giveaway with the giveaway message ID'), 'Giveaway message ID'));
 gw.addSubcommand((s) => idOpt(s.setName('fix').setDescription('Fix a giveaway if it fails to end'), 'Giveaway message ID'));
 gw.addSubcommand((s) => s.setName('manager-roles').setDescription('Set roles with which people can use every command in the bot'));
@@ -488,7 +495,7 @@ async function statsCommand(i) {
     { name: 'Winners picked', value: String(all.reduce((n, g) => n + g.winnerIds.length, 0)), inline: true }, { name: 'Drops', value: String(drops.length), inline: true },
     { name: 'Scheduled', value: String(Object.values(scheduledMap()).filter((x) => x.guildId === i.guildId).length), inline: true },
     { name: 'Templates', value: String(Object.keys(cfg.templates || {}).length), inline: true },
-    { name: 'Blacklisted', value: `${blacklistOf(i.guildId).length} people`, inline: true })] });
+    { name: 'Blacklisted', value: `${blacklistOf(i.guildId).length} people, ${(cfg.blacklistRoles || []).length} roles`, inline: true })] });
 }
 
 /* ───────────── templates ───────────── */
@@ -510,7 +517,7 @@ async function templateCommand(i) {
     const g = db.giveaways[i.options.getString('message-id')];
     if (!g || g.guildId !== i.guildId) return i.reply({ content: 'Giveaway not found.', ...eph });
     if (!tpls[name] && Object.keys(tpls).length >= 25) return i.reply({ content: '❌ You can have up to 25 templates.', ...eph });
-    tpls[name] = JSON.parse(JSON.stringify({ prize: g.prize, winners: g.winners, extra: g.extra, winnersRole: g.winnersRole, claimMs: g.claimMs, claimInChannel: g.claimInChannel, dmMessage: g.dmMessage,
+    tpls[name] = JSON.parse(JSON.stringify({ prize: g.prize, winners: g.winners, extra: g.extra, winnersRole: g.winnersRole, claimMs: g.claimMs, dmWinner: winnerDMs(g), dmMessage: g.dmMessage,
       image: g.image, thumbnail: g.thumbnail, color: g.color, endColor: g.endColor, bypass: g.bypass, req: g.req, endMessage: g.endMessage, dmHost: g.dmHost }));
     save();
     return i.reply({ content: `✅ Saved the template **${name}**. Use it with \`/template use\`.`, ...eph });
@@ -676,21 +683,58 @@ async function sweepServerRequirements() {
   } finally { sweeping = false; }
 }
 // picks winners, skipping anyone who left the required server
+// can this person still win? (not blacklisted, no blacklisted role, still in the required server)
+async function stillEligible(g, uid) {
+  if ((g.dummies || []).includes(uid)) return true;
+  if (blacklistOf(g.guildId).includes(uid)) return false;
+  const roles = guildCfg(g.guildId).blacklistRoles || [];
+  if (roles.length) {
+    const hg = client.guilds.cache.get(g.guildId);
+    const m = hg ? await hg.members.fetch(uid).catch(() => null) : null;
+    if (m && roles.some((r) => m.roles.cache.has(r))) return false;
+  }
+  if (g.req?.server) {
+    const guild = client.guilds.cache.get(g.req.server.id);
+    if (guild) { const m = await guild.members.fetch(uid).catch((e) => (e?.code === 10007 ? null : undefined)); if (m === null) return false; }
+  }
+  return true;
+}
+// picks winners, skipping anyone who is no longer eligible
 async function pickWinnersChecked(g, count, exclude = []) {
-  const guild = g.req?.server ? client.guilds.cache.get(g.req.server.id) : null;
-  if (!guild) return pickWinners(g, count, exclude);
+  const needCheck = g.req?.server || (guildCfg(g.guildId).blacklistRoles || []).length || blacklistOf(g.guildId).length;
+  if (!needCheck) return pickWinners(g, count, exclude);
   const out = [], skip = new Set(exclude);
   while (out.length < count) {
     const cand = pickWinners(g, count - out.length, [...skip]);
     if (!cand.length) break;
-    const checked = await Promise.all(cand.map(async (u) => {
-      if ((g.dummies || []).includes(u)) return [u, true];
-      const m = await guild.members.fetch(u).catch((e) => (e?.code === 10007 ? null : undefined));
-      return [u, m !== null];
-    }));
+    const checked = await Promise.all(cand.map(async (u) => [u, await stillEligible(g, u)]));
     for (const [u, ok] of checked) { skip.add(u); if (ok) out.push(u); else delete g.entries[u]; }
   }
   return out;
+}
+let sweepingRoles = false;
+async function sweepBlacklistedRoles() {
+  if (sweepingRoles) return;
+  sweepingRoles = true;
+  try {
+    let budget = 15;
+    for (const g of Object.values(db.giveaways)) {
+      const roles = guildCfg(g.guildId).blacklistRoles || [];
+      if (g.ended || g.paused || !roles.length || budget <= 0) continue;
+      const hg = client.guilds.cache.get(g.guildId);
+      const ids = Object.keys(g.entries).filter((u) => !(g.dummies || []).includes(u));
+      if (!hg || !ids.length) continue;
+      let changed = false;
+      for (let n = 0; n < Math.min(budget, ids.length); n++) {
+        g.sweepRoleAt = ((g.sweepRoleAt ?? -1) + 1) % ids.length;
+        budget--;
+        const uid = ids[g.sweepRoleAt];
+        const m = await hg.members.fetch(uid).catch(() => null);
+        if (m && roles.some((r) => m.roles.cache.has(r))) { delete g.entries[uid]; changed = true; }
+      }
+      if (changed) { save(); await refreshMessage(g); }
+    }
+  } finally { sweepingRoles = false; }
 }
 
 // If I get removed from a required server I can't check anyone, so the giveaway pauses until I'm added back
@@ -831,7 +875,8 @@ const helpCmd = new SlashCommandBuilder().setName('help').setDescription('How to
 const blacklistCmd = new SlashCommandBuilder().setName('blacklist').setDescription('Stop people from joining giveaways in this server').setDMPermission(false)
   .addSubcommand((s) => s.setName('add').setDescription('Blacklist a person').addUserOption((o) => o.setName('user').setDescription('The person to blacklist').setRequired(true)))
   .addSubcommand((s) => s.setName('remove').setDescription('Remove a person from the blacklist').addUserOption((o) => o.setName('user').setDescription('The person to remove').setRequired(true)))
-  .addSubcommand((s) => s.setName('list').setDescription('View everyone who is blacklisted'));
+  .addSubcommand((s) => s.setName('roles').setDescription('Choose which roles are blacklisted'))
+  .addSubcommand((s) => s.setName('list').setDescription('View the blacklisted people and roles'));
 
 /* ───────────── /help: pick any command for detailed help ───────────── */
 const WHO = { all: 'Everyone', create: 'Creator roles, manager roles or Manage Server', mgr: 'Manage Server or a manager role' };
@@ -841,8 +886,8 @@ const HELP_CMDS = [
     usage: '/giveaway create duration:<time> winners:<number> prize:<text> [options]',
     opts: [['duration', 'how long it lasts: `1 hour`, `2 days` or a Discord timestamp (required)'], ['winners', 'how many people win (required)'], ['prize', 'what is being given away (required)'],
       ['channel', 'where to post it (default: this channel)'], ['host', 'who is hosting (default: you)'], ['extra-entries', 'bonus entries for roles, like `@Booster 5, @VIP 3`'],
-      ['giveaway-start-message', 'an extra message posted when it starts'], ['giveaway-end-message', 'a message posted when it ends (`{prize}`, `{winners}`, `{entries}` and `{host}` work)'], ['dm-host', 'DM the host a summary when it ends'], ['giveaway-winners-role', 'role given to every winner'], ['claim-time', 'how long winners have to claim before being rerolled, like `24 hours`. Winners get the Claim button in their DMs. Add the word `channel` (like `24 hours channel`) to put it in the channel instead. Leave it empty for no claiming and no auto reroll'],
-      ['giveaway-winners-dm-message', 'DM sent to winners (`{prize}` and `{server}` work)'], ['image / thumbnail', 'pictures for the giveaway embed'],
+      ['giveaway-start-message', 'an extra message posted when it starts'], ['giveaway-end-message', 'a message posted when it ends (`{prize}`, `{winners}`, `{entries}` and `{host}` work)'], ['dm-host', 'DM the host a summary when it ends'], ['giveaway-winners-role', 'role given to every winner'], ['claim-time', 'how long winners have to claim before being rerolled (auto reroll), like `24 hours`. Winners are DMed their Claim button. Leave it empty for no claiming and no auto reroll'],
+      ['giveaway-winners-dm-message', 'DM sent to winners (`{prize}` and `{server}` work). Type `off` to send NO DMs: with auto reroll on, the Claim button is then posted only in the channel the giveaway is in'], ['image / thumbnail', 'pictures for the giveaway embed'],
       ['required-roles', 'roles needed to enter (mention them, separate with commas)'], ['required-server-boosts', 'entrant must be boosting this server'], ['require-server-tag', "entrant must have this server's tag equipped"],
       ['required-daily / weekly / monthly / total-messages', 'minimum message counts'], ['required-server', 'members must join another server first (the bot must be in both). They are entered automatically once they join, and removed if they leave'],
       ['requirement-bypass-roles', 'roles that skip every requirement'], ['color / end-color', 'hex colours before and after it ends']],
@@ -862,7 +907,7 @@ const HELP_CMDS = [
   { id: 'giveaway winners', desc: 'See winners and who claimed', who: WHO.mgr, usage: '/giveaway winners [message-id:<pick>]', opts: [['message-id', 'pick an ended giveaway to see its winners and claims. Leave it empty to see the last 10 giveaways and their winners']], example: '/giveaway winners', notes: '' },
   { id: 'giveaway participants', desc: 'See everyone who entered', who: WHO.mgr, usage: '/giveaway participants message-id:<pick>', opts: [['message-id', PICK]], example: '/giveaway participants message-id:Nitro', notes: 'The Participants button on a giveaway shows the same list, with paging and a Remove button for managers.' },
   { id: 'giveaway edit', desc: 'Change a giveaway', who: WHO.mgr, usage: '/giveaway edit message-id:<pick> [prize:<text>] [winners:<number>] [duration:<time>]',
-    opts: [['message-id', PICK], ['prize', 'a new prize'], ['winners', 'a new winner count'], ['duration', 'a new end time counted from now (running giveaways only)'], ['giveaway-end-message', 'a new end message, or `none` to remove it'], ['claim-time', 'a new claim time, `24 hours channel` to claim in the channel instead of DMs, or `none` to turn claiming and auto reroll off'], ['dm-host', 'turn the DM to the host on or off']], example: '/giveaway edit message-id:Nitro duration:3 hours', notes: 'Leave out anything you do not want to change.' },
+    opts: [['message-id', PICK], ['prize', 'a new prize'], ['winners', 'a new winner count'], ['duration', 'a new end time counted from now (running giveaways only)'], ['giveaway-end-message', 'a new end message, or `none` to remove it'], ['claim-time', 'a new claim time, or `none` to turn claiming and auto reroll off'], ['dm-winner', '`true` to DM winners their Claim button, `false` to post it only in the giveaway channel'], ['dm-host', 'turn the DM to the host on or off']], example: '/giveaway edit message-id:Nitro duration:3 hours', notes: 'Leave out anything you do not want to change.' },
   { id: 'giveaway pause', desc: 'Freeze a running giveaway', who: WHO.mgr, usage: '/giveaway pause message-id:<pick>', opts: [['message-id', PICK + ' Only running giveaways are listed.']], example: '/giveaway pause message-id:Nitro', notes: 'The timer stops and nobody can join until you resume it. The time left is kept.' },
   { id: 'giveaway resume', desc: 'Carry on a paused giveaway', who: WHO.mgr, usage: '/giveaway resume message-id:<pick>', opts: [['message-id', PICK + ' Only paused giveaways are listed.']], example: '/giveaway resume message-id:Nitro', notes: 'It ends after the time that was left when you paused it.' },
   { id: 'giveaway extend', desc: 'Add more time to a running giveaway', who: WHO.mgr, usage: '/giveaway extend message-id:<pick> time:<amount>',
@@ -878,7 +923,8 @@ const HELP_CMDS = [
   { id: 'template delete', desc: 'Delete a template', who: WHO.mgr, usage: '/template delete name:<pick>', opts: [['name', 'pick the template to delete']], example: '/template delete name:weekly', notes: '' },
   { id: 'blacklist add', desc: 'Stop a person from joining giveaways', who: WHO.mgr, usage: '/blacklist add user:<@user>', opts: [['user', 'the person to block']], example: '/blacklist add user:@Sam', notes: 'They are removed from running giveaways and cannot join new ones.' },
   { id: 'blacklist remove', desc: 'Let a blacklisted person join again', who: WHO.mgr, usage: '/blacklist remove user:<@user>', opts: [['user', 'the person to unblock']], example: '/blacklist remove user:@Sam', notes: '' },
-  { id: 'blacklist list', desc: 'See everyone who is blacklisted', who: WHO.mgr, usage: '/blacklist list', opts: [], example: '/blacklist list', notes: '' },
+  { id: 'blacklist roles', desc: 'Choose which roles are blacklisted', who: WHO.mgr, usage: '/blacklist roles', opts: [], example: '/blacklist roles', notes: 'Opens a role picker with your current choice selected. Pick none to clear it. Members with a blacklisted role cannot join, and are removed from running giveaways within a few seconds. They also cannot win.' },
+  { id: 'blacklist list', desc: 'See the blacklisted people and roles', who: WHO.mgr, usage: '/blacklist list', opts: [], example: '/blacklist list', notes: 'Shows both the people and the roles.' },
   { id: 'leaderboard messages', desc: 'Top chatters in the server', who: WHO.all, usage: '/leaderboard messages [period:<today|week|month|total>]', opts: [['period', 'Today, This week, This month or All time (default: all time)']], example: '/leaderboard messages period:week', notes: 'Counts messages sent after the bot joined.' },
   { id: 'messages', desc: 'View message counts', who: WHO.all, usage: '/messages [user:<@user>]', opts: [['user', 'whose counts to see (default: you)']], example: '/messages user:@Sam', notes: 'Shows today, this week, this month and total.' },
   { id: 'mywins', desc: 'See the giveaways you won', who: WHO.all, usage: '/mywins', opts: [], example: '/mywins', notes: 'Only you can see the reply.' },
@@ -917,7 +963,7 @@ function helpMessage() {
       { name: `${GIFT} Giveaways`, value: '`/giveaway create` start a giveaway\n`/giveaway schedule` start one later\n`/giveaway scheduled` and `unschedule` view or cancel them\n`/giveaway end` end one early\n`/giveaway reroll` pick new winners\n`/giveaway edit` change the prize, winners or time\n`/giveaway delete` remove a giveaway\n`/giveaway fix` repair one that failed to end\n`/giveaway participants` see who entered' },
       { name: `${EM.wrench} Setup`, value: '`/giveaway manager-roles` who can use every command\n`/giveaway creator-roles` who can only create giveaways' },
       { name: '🧰 More tools', value: '`/giveaway list` running giveaways\n`/giveaway pause` and `resume`\n`/giveaway winners` winners and claims\n`/giveaway add-entries` bonus entries\n`/giveaway drop` first to click wins\n`/template` save and reuse settings\n🔔 button on a giveaway: DM me when it ends' },
-      { name: `${EM.chart} Info`, value: '`/mywins` `/myentries` `/stats` `/messages`\n`/leaderboard messages` top chatters\n`/blacklist add`, `remove`, `list`\n`/help` this menu' },
+      { name: `${EM.chart} Info`, value: '`/mywins` `/myentries` `/stats` `/messages`\n`/leaderboard messages` top chatters\n`/blacklist add`, `remove`, `roles`, `list`\n`/help` this menu' },
       { name: '✨ Good to know', value: '• Winners get a **Claim** button in their DMs (or the channel) when a claim time is set\n• Requirements: roles, boosting, server tag, message counts, or joining another server\n• Commands that need a giveaway let you pick it from a list\n• Create and manage giveaways from the website dashboard' })
     .setFooter({ text: 'Made by @lav1nrules' });
   return { embeds: [e], components: [...helpRows(), helpLinkRow(false)] };
@@ -925,8 +971,16 @@ function helpMessage() {
 async function blacklistCommand(i) {
   if (!isManager(i)) return i.reply({ content: 'You need Manage Server or a manager role.', ...eph });
   const sub = i.options.getSubcommand(), bl = blacklistOf(i.guildId);
-  if (sub === 'list') return i.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle(`${EM.no} Giveaway blacklist`)
-    .setDescription(bl.map((u, n) => `${n + 1}. <@${u}>`).join('\n').slice(0, 4000) || 'Nobody is blacklisted.')], allowedMentions: { parse: [] }, ...eph });
+  const cfg = guildCfg(i.guildId);
+  cfg.blacklistRoles ??= [];
+  if (sub === 'roles') {
+    const menu = new RoleSelectMenuBuilder().setCustomId('cfg:blacklist-roles').setPlaceholder('Pick the blacklisted roles').setMinValues(0).setMaxValues(25);
+    if (cfg.blacklistRoles.length) menu.setDefaultRoles(...cfg.blacklistRoles.slice(0, 25));
+    return i.reply({ content: 'Select the roles that are blacklisted from giveaways. Members with them cannot join. Select none to clear.', components: [new ActionRowBuilder().addComponents(menu)], ...eph });
+  }
+  if (sub === 'list') return i.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle(`${EM.no} Giveaway blacklist`).addFields(
+    { name: 'People', value: bl.map((u, n) => `${n + 1}. <@${u}>`).join('\n').slice(0, 1000) || 'Nobody is blacklisted.' },
+    { name: 'Roles', value: cfg.blacklistRoles.map((r) => `<@&${r}>`).join(' ').slice(0, 1000) || 'No roles are blacklisted.' })], allowedMentions: { parse: [] }, ...eph });
   const u = i.options.getUser('user');
   if (sub === 'add') {
     if (u.bot) return i.reply({ content: "❌ You can't blacklist a bot.", ...eph });
@@ -1112,13 +1166,16 @@ client.on('interactionCreate', async (i) => {
       const endMsg = i.options.getString('giveaway-end-message'), dmHost = i.options.getBoolean('dm-host');
       if (endMsg !== null) g.endMessage = /^(none|off)$/i.test(endMsg.trim()) ? null : endMsg.trim().slice(0, 1500);
       if (dmHost !== null) g.dmHost = dmHost;
+      const dmWin = i.options.getBoolean('dm-winner');
+      if (dmWin !== null) { g.dmWinner = dmWin; g.claimInChannel = false; }
       const claimStr = i.options.getString('claim-time');
       if (claimStr !== null) {
         if (/^(none|off)$/i.test(claimStr.trim())) { g.claimMs = null; g.claimDeadline = null; g.claimInChannel = false; }
         else {
           const ms = parseMs(claimStr);
           if (!ms || ms < 60000) return i.reply({ content: 'Invalid claim time. Try `24 hours`, `24 hours channel`, or `none` to turn claiming off.', ...eph });
-          g.claimMs = ms; g.claimInChannel = /\b(channel|here)\b/i.test(claimStr);
+          g.claimMs = ms; g.claimInChannel = false;
+          if (/\b(channel|here)\b/i.test(claimStr)) g.dmWinner = false;
           if (g.ended && g.winnerIds.length) g.claimDeadline = Date.now() + ms;
         }
       }
@@ -1138,7 +1195,7 @@ async function launchGiveaway(o) {
   const g = {
     guildId: o.guildId, channelId: o.ch.id, messageId: null, endsAt: o.endsAt, ended: false,
     prize: o.prize, winners: o.winners, host: o.host, extra: o.extra || {}, winnersRole: o.winnersRole || null,
-    claimMs: o.claimMs || null, claimInChannel: !!o.claimInChannel, dmMessage: o.dmMessage || null, image: o.image || null, thumbnail: o.thumbnail || null,
+    claimMs: o.claimMs || null, dmWinner: o.dmWinner !== false && !o.claimInChannel, dmMessage: o.dmMessage || null, image: o.image || null, thumbnail: o.thumbnail || null,
     color: o.color, endColor: o.endColor, bypass: o.bypass || [], endMessage: o.endMessage || null, dmHost: !!o.dmHost, req: o.req, entries: {}, winnerIds: [], claimed: [],
   };
   const msg = await o.ch.send({ embeds: [embedFor(g)], components: [enterRow(g)] });
@@ -1151,10 +1208,11 @@ async function launchGiveaway(o) {
 }
 function readGiveawayOptions(i) {
   const o = i.options, claimStr = o.getString('claim-time');
+  const dmRaw = (o.getString('giveaway-winners-dm-message') || '').trim(), dmOff = /^(off|none|no)$/i.test(dmRaw) || /\b(channel|here)\b/i.test(claimStr || '');
   return {
     guildId: i.guildId, prize: o.getString('prize'), winners: o.getInteger('winners'), host: (o.getUser('host') || i.user).id,
     extra: parseExtra(o.getString('extra-entries')), winnersRole: o.getRole('giveaway-winners-role')?.id || null,
-    claimMs: claimStr ? parseMs(claimStr) : null, claimInChannel: /\b(channel|here)\b/i.test(claimStr || ''), dmMessage: o.getString('giveaway-winners-dm-message'),
+    claimMs: claimStr ? parseMs(claimStr) : null, dmWinner: !dmOff, dmMessage: /^(off|none|no)$/i.test(dmRaw) ? null : (dmRaw || null),
     image: o.getAttachment('image')?.url || null, thumbnail: o.getAttachment('thumbnail')?.url || null,
     color: parseColor(o.getString('color'), 0x5865f2), endColor: parseColor(o.getString('end-color'), 0x2b2d31),
     bypass: ids(o.getString('requirement-bypass-roles')), createMessage: o.getString('giveaway-start-message'), endMessage: o.getString('giveaway-end-message'), dmHost: !!o.getBoolean('dm-host'),
@@ -1382,9 +1440,10 @@ async function onModal(i) {
 }
 async function onRoleSelect(i) {
   if (!i.customId.startsWith('cfg:') || !isManager(i)) return i.reply({ content: 'Not allowed.', ...eph });
-  const key = i.customId === 'cfg:manager-roles' ? 'managerRoles' : 'creatorRoles';
+  const key = { 'cfg:manager-roles': 'managerRoles', 'cfg:blacklist-roles': 'blacklistRoles' }[i.customId] || 'creatorRoles';
+  const label = { managerRoles: 'manager roles', creatorRoles: 'creator roles', blacklistRoles: 'blacklisted roles' }[key];
   guildCfg(i.guildId)[key] = i.values; save();
-  return i.update({ content: `Saved ${key === 'managerRoles' ? 'manager' : 'creator'} roles: ${i.values.map((r) => `<@&${r}>`).join(', ') || 'none'}`, components: [] });
+  return i.update({ content: `Saved ${label}: ${i.values.map((r) => `<@&${r}>`).join(', ') || 'none'}`, components: [] });
 }
 
 /* ───────────── dashboard management helpers ───────────── */
@@ -1449,7 +1508,7 @@ async function createFromWeb(guild, s, b) {
   if (rs?.error) return [400, rs.error];
   const g = await launchGiveaway({
     guildId: guild.id, ch, endsAt, prize, winners: int(b.winners, 1, 50), host: s.uid, extra,
-    winnersRole: hasRole(b.winnersRole) ? b.winnersRole : null, claimMs, claimInChannel, dmMessage: str(b.dmMessage, 1500) || null,
+    winnersRole: hasRole(b.winnersRole) ? b.winnersRole : null, claimMs, dmWinner: b.dmWinner !== false && !claimInChannel, dmMessage: str(b.dmMessage, 1500) || null,
     image: link(b.image), thumbnail: link(b.thumbnail), color: parseColor(str(b.color, 7), 0x5865f2), endColor: parseColor(str(b.endColor, 7), 0x2b2d31),
     bypass: roleList(b.bypass), createMessage: str(b.createMessage, 1500) || null, endMessage: str(b.endMessage, 1500) || null, dmHost: !!b.dmHost,
     req: { roles: roleList(b.requiredRoles), boosts: b.boosts ? 1 : 0, serverTag: !!b.serverTag,
@@ -1569,6 +1628,43 @@ function servePage(res, name) {
   res.end(fs.readFileSync(page, 'utf8').replaceAll('YOUR_CLIENT_ID', process.env.CLIENT_ID || 'YOUR_CLIENT_ID'));
 }
 
+/* ───────────── image uploads from the dashboard ───────────── */
+const uploadLog = {};   // user id -> upload times (to stop abuse)
+function sniffImage(b) {
+  if (b.length < 12) return null;
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'image/png';
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
+  if (b.toString('ascii', 0, 4) === 'GIF8') return 'image/gif';
+  if (b.toString('ascii', 0, 4) === 'RIFF' && b.toString('ascii', 8, 12) === 'WEBP') return 'image/webp';
+  return null;
+}
+function readRaw(req, max) {
+  return new Promise((resolve, reject) => {
+    const chunks = []; let size = 0;
+    let dead = false;
+    req.on('data', (c) => { if (dead) return; size += c.length; if (size > max) { dead = true; chunks.length = 0; reject(new Error('too big')); } else chunks.push(c); });
+    req.on('end', () => { if (!dead) resolve(Buffer.concat(chunks)); });
+    req.on('error', reject);
+  });
+}
+const UPLOAD_DIR = `${DATA_DIR}/uploads`;
+async function saveImage(buf, mime) {
+  const id = crypto.randomBytes(8).toString('hex');
+  if (mongoImages) await mongoImages.insertOne({ _id: id, mime, data: buf, at: Date.now() });
+  else { fs.mkdirSync(UPLOAD_DIR, { recursive: true }); fs.writeFileSync(`${UPLOAD_DIR}/${id}`, buf); fs.writeFileSync(`${UPLOAD_DIR}/${id}.mime`, mime); }
+  return id;
+}
+async function loadImage(id) {
+  if (mongoImages) {
+    const d = await mongoImages.findOne({ _id: id });
+    if (!d) return null;
+    const b = d.data;
+    return { mime: d.mime, data: Buffer.isBuffer(b) ? b : Buffer.from(b.buffer.subarray(0, b.position ?? b.buffer.length)) };
+  }
+  if (!fs.existsSync(`${UPLOAD_DIR}/${id}`)) return null;
+  return { mime: fs.readFileSync(`${UPLOAD_DIR}/${id}.mime`, 'utf8'), data: fs.readFileSync(`${UPLOAD_DIR}/${id}`) };
+}
+
 async function handle(req, res) {
   const url = new URL(req.url, 'http://x'), p = url.pathname;
   const proto = String(req.headers['x-forwarded-proto'] || 'http').split(',')[0].trim();
@@ -1633,6 +1729,34 @@ async function handle(req, res) {
     return redirect(res, '/');
   }
 
+  if (p === '/api/upload') {
+    if (req.method !== 'POST') return sendJson(res, 405, { error: 'Use POST.' });
+    const a = await authGuild(req, res, url.searchParams.get('guild') || '');
+    if (!a) return;
+    if (!a.create) return sendJson(res, 403, { error: 'You need Manage Server or a creator role to upload images.' });
+    const hits = (uploadLog[a.s.uid] = (uploadLog[a.s.uid] || []).filter((t) => t > Date.now() - 36e5));
+    if (hits.length >= 20) return sendJson(res, 429, { error: 'Too many uploads. Try again in a while.' });
+    let buf;
+    try { buf = await readRaw(req, 5 * 1024 * 1024); } catch {
+      res.setHeader('Connection', 'close');
+      res.once('finish', () => setTimeout(() => req.destroy(), 100));   // answer first, then drop the rest of the upload
+      return sendJson(res, 413, { error: 'That image is too big (5 MB maximum).' });
+    }
+    const mime = sniffImage(buf);
+    if (!mime) return sendJson(res, 400, { error: 'Upload a PNG, JPG, GIF or WebP image.' });
+    hits.push(Date.now());
+    const id = await saveImage(buf, mime);
+    return sendJson(res, 200, { url: `${site}/u/${id}` });
+  }
+  const um = p.match(/^\/u\/([a-f0-9]{16})$/);
+  if (um) {
+    const img = await loadImage(um[1]);
+    if (!img) { res.statusCode = 404; return res.end('Not found'); }
+    res.setHeader('Content-Type', img.mime);
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    res.setHeader('Content-Length', img.data.length);
+    return res.end(img.data);
+  }
   if (p === '/api/me') {
     const s = getSession(req);
     return sendJson(res, 200, { user: s ? { id: s.uid, username: s.username, avatar: s.avatar } : null, loginReady: loginReady() });
@@ -1674,7 +1798,7 @@ async function handle(req, res) {
           .sort((x, y) => x.rawPosition - y.rawPosition).map((c) => ({ id: c.id, name: c.name })),
         roles: [...guild.roles.cache.values()].filter((r) => r.id !== guild.id && !r.managed).sort((x, y) => y.position - x.position).map((r) => ({ id: r.id, name: r.name })),
         joinable: a.s.guilds.filter((id) => id !== guild.id && client.guilds.cache.has(id)).map((id) => ({ id, name: client.guilds.cache.get(id).name })),
-        settings: a.manage ? { creatorRoles: guildCfg(guild.id).creatorRoles, managerRoles: guildCfg(guild.id).managerRoles, blacklist } : null,
+        settings: a.manage ? { creatorRoles: guildCfg(guild.id).creatorRoles, managerRoles: guildCfg(guild.id).managerRoles, blacklist, blacklistRoles: guildCfg(guild.id).blacklistRoles || [] } : null,
         live: live.map((g) => gSummary(g, guild)), ended: ended.map((g) => gSummary(g, guild)),
         stats: { live: live.length, hosted: all.length, entries: live.reduce((n, g) => n + Object.keys(g.entries).length, 0), members: guild.memberCount },
         top: await Promise.all(top.map(async ([id, st]) => ({ id, username: await nameOf(id), total: st.total }))),
@@ -1688,6 +1812,11 @@ async function handle(req, res) {
       return sendJson(res, code, error ? { error } : { ok: true, ...extra });
     }
     if (!a.manage) return sendJson(res, 403, { error: 'You need Manage Server or a manager role.' });
+    if (sm[2] === 'blacklist' && body.action === 'roles') {
+      guildCfg(guild.id).blacklistRoles = (Array.isArray(body.roles) ? body.roles : []).filter((r) => typeof r === 'string' && guild.roles.cache.has(r)).slice(0, 25);
+      save();
+      return sendJson(res, 200, { ok: true });
+    }
     if (sm[2] === 'blacklist') {
       const uid = String(body.userId || '').trim();
       if (!/^\d{15,22}$/.test(uid)) return sendJson(res, 400, { error: 'Enter a valid Discord user ID.' });
@@ -1722,8 +1851,8 @@ async function handle(req, res) {
     }
     if (act === 'config') {
       return sendJson(res, 200, { prize: g.prize, winners: g.winners, channelId: g.channelId, extra: Object.entries(g.extra || {}).map(([role, entries]) => ({ role, entries })),
-        bypass: g.bypass || [], req: g.req, claimTime: g.claimMs ? `${Math.max(1, Math.round(g.claimMs / 60000))} minutes${g.claimInChannel ? ' channel' : ''}` : '', winnersRole: g.winnersRole || '',
-        dmMessage: g.dmMessage || '', endMessage: g.endMessage || '', dmHost: !!g.dmHost, color: hex(g.color), endColor: hex(g.endColor), image: g.image || '', thumbnail: g.thumbnail || '' });
+        bypass: g.bypass || [], req: g.req, claimTime: g.claimMs ? `${Math.max(1, Math.round(g.claimMs / 60000))} minutes` : '', winnersRole: g.winnersRole || '',
+        dmMessage: g.dmMessage || '', dmWinner: winnerDMs(g), endMessage: g.endMessage || '', dmHost: !!g.dmHost, color: hex(g.color), endColor: hex(g.endColor), image: g.image || '', thumbnail: g.thumbnail || '' });
     }
     if (req.method !== 'POST') return sendJson(res, 405, { error: 'Use POST.' });
     let r;
