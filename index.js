@@ -1,7 +1,7 @@
 require('dotenv').config();
 const fs = require('fs');
 const {
-  Client, GatewayIntentBits, IntentsBitField, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder,
+  Client, GatewayIntentBits, IntentsBitField, WebhookClient, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder,
   ButtonBuilder, ButtonStyle, RoleSelectMenuBuilder, StringSelectMenuBuilder, ModalBuilder, TextInputBuilder,
   TextInputStyle, REST, Routes, PermissionFlagsBits, MessageFlags, ChannelType, ActivityType,
 } = require('discord.js');
@@ -942,6 +942,7 @@ function helpLinkRow(back) {
   if (back) row.addComponents(new ButtonBuilder().setCustomId('help_back').setLabel('Back to help').setStyle(ButtonStyle.Secondary));
   if (BASE) row.addComponents(new ButtonBuilder().setLabel('Dashboard').setEmoji({ id: WEB_ID }).setStyle(ButtonStyle.Link).setURL(`${BASE}/dashboard`));
   row.addComponents(new ButtonBuilder().setLabel('Add to your server').setStyle(ButtonStyle.Link).setURL(`https://discord.com/oauth2/authorize?client_id=${process.env.CLIENT_ID}&permissions=268520449&scope=bot%20applications.commands`));
+  row.addComponents(new ButtonBuilder().setLabel('Join Support Server').setStyle(ButtonStyle.Link).setURL('https://dc.gg/givevanced'));
   return row;
 }
 function helpDetail(c) {
@@ -992,6 +993,44 @@ async function blacklistCommand(i) {
   bl.splice(idx, 1); save();
   return i.reply({ content: `✅ <@${u.id}> was removed from the blacklist.`, allowedMentions: { parse: [] }, ...eph });
 }
+
+/* ───────────── "Givevanced Bot Joins": tells the support server whenever the bot joins or leaves a server ───────────── */
+const JOIN_LOG = { channel: '1568922018026627132', name: 'Givevanced Bot Joins' };   // channel in server 1559610400935378954
+let joinHook = null;
+async function getJoinHook(ch) {
+  if (joinHook) return joinHook;
+  if (typeof ch.fetchWebhooks !== 'function') return null;
+  const hooks = await ch.fetchWebhooks().catch(() => null);
+  joinHook = hooks?.find((h) => h.name === JOIN_LOG.name && h.owner?.id === client.user.id) || null;
+  if (!joinHook) joinHook = await ch.createWebhook({ name: JOIN_LOG.name, avatar: client.user.displayAvatarURL({ extension: 'png' }), reason: 'Bot join and leave log' }).catch(() => null);
+  return joinHook;
+}
+async function logGuildEvent(kind, g) {
+  try {
+    const joined = kind === 'join';
+    const e = new EmbedBuilder().setColor(joined ? 0x57f287 : 0xed4245).setTitle(`${joined ? TICK : CROSS} ${joined ? 'Joined a server' : 'Left a server'}`).setTimestamp()
+      .setDescription(`**${g.name || 'Unknown server'}**`).addFields(
+        { name: 'Server ID', value: `\`${g.id}\``, inline: true },
+        { name: 'Members', value: String(g.memberCount ?? '?'), inline: true },
+        { name: 'Owner', value: g.ownerId ? `<@${g.ownerId}> (\`${g.ownerId}\`)` : 'Unknown', inline: false });
+    if (g.createdTimestamp) e.addFields({ name: 'Server created', value: `<t:${Math.floor(g.createdTimestamp / 1000)}:R>`, inline: true });
+    if (!joined && g.joinedTimestamp) e.addFields({ name: 'Was in it for', value: shortLeft(Date.now() - g.joinedTimestamp) || 'under a minute', inline: true });
+    e.addFields({ name: 'Servers now', value: String(client.guilds.cache.size), inline: true });
+    const icon = g.iconURL?.({ size: 256 });
+    if (icon) e.setThumbnail(icon);
+    const payload = { username: JOIN_LOG.name, avatarURL: client.user.displayAvatarURL(), embeds: [e], allowedMentions: { parse: [] } };
+    // 1) a webhook link you set yourself (JOIN_WEBHOOK_URL)
+    if (process.env.JOIN_WEBHOOK_URL) { await new WebhookClient({ url: process.env.JOIN_WEBHOOK_URL }).send(payload); return; }
+    const ch = await client.channels.fetch(JOIN_LOG.channel).catch(() => null);
+    if (!ch) return;
+    // 2) a webhook the bot creates in that channel (needs Manage Webhooks), 3) otherwise a normal message from the bot
+    const hook = await getJoinHook(ch);
+    if (hook) { try { await hook.send(payload); return; } catch { joinHook = null; } }
+    await ch.send({ embeds: [e], allowedMentions: { parse: [] } });
+  } catch (err) { console.error('Join log failed', err); }
+}
+client.on('guildCreate', (g) => { logGuildEvent('join', g); });
+client.on('guildDelete', (g) => { if (g.available !== false) logGuildEvent('leave', g); });
 
 client.on('guildDelete', (gd) => { if (gd.available !== false) checkRequiredServers().catch(console.error); });
 client.on('guildCreate', () => { checkRequiredServers().catch(console.error); });
